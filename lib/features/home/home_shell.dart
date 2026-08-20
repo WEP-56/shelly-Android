@@ -65,6 +65,8 @@ class _HomeShellState extends State<HomeShell> {
             extraKeys: widget.settings.extraKeys,
             snippets: widget.services.snippets,
             history: widget.services.history,
+            agentSettings: widget.services.agentSettings,
+            agentSessions: widget.services.agentSessions,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -176,13 +178,22 @@ class _HomeShellState extends State<HomeShell> {
                             listenable: _hosts,
                             builder: (context, child) => _buildHostList(),
                           )
-                        : SettingsView(
+                        : ListenableBuilder(
                             key: const ValueKey('settings'),
-                            settings: widget.settings,
-                            knownHosts: widget.services.knownHosts,
-                            themePreference: widget.themePreference,
-                            onSettingsChanged: widget.onSettingsChanged,
-                            onThemeChanged: widget.onThemeChanged,
+                            listenable: _hosts,
+                            builder: (context, child) => SettingsView(
+                              settings: widget.settings,
+                              knownHosts: widget.services.knownHosts,
+                              agentSettings: widget.services.agentSettings,
+                              agentSessions: widget.services.agentSessions,
+                              hostNames: {
+                                for (final host in _hosts.hosts)
+                                  host.id: host.name,
+                              },
+                              themePreference: widget.themePreference,
+                              onSettingsChanged: widget.onSettingsChanged,
+                              onThemeChanged: widget.onThemeChanged,
+                            ),
                           ),
                   ),
                 ),

@@ -1,5 +1,7 @@
 import '../ssh/known_host_repository.dart';
 import '../ssh/ssh_connection_factory.dart';
+import '../../features/agent/data/agent_session_repository.dart';
+import '../../features/agent/data/agent_settings_repository.dart';
 import '../../features/hosts/data/host_repository.dart';
 import '../../features/history/history_repository.dart';
 import '../../features/snippets/snippet_repository.dart';
@@ -16,6 +18,8 @@ class AppServices {
     required this.sshConnections,
     required this.snippets,
     required this.history,
+    required this.agentSettings,
+    required this.agentSessions,
   });
 
   final AppDatabase database;
@@ -25,6 +29,8 @@ class AppServices {
   final SshConnectionFactory sshConnections;
   final SnippetRepository snippets;
   final HistoryRepository history;
+  final AgentSettingsRepository agentSettings;
+  final AgentSessionRepository agentSessions;
 
   static Future<AppServices> open() async {
     final database = await AppDatabase.open();
@@ -42,6 +48,11 @@ class AppServices {
       ),
       snippets: SnippetRepository(database),
       history: HistoryRepository(database),
+      agentSettings: AgentSettingsRepository(
+        database: database,
+        credentials: credentials,
+      ),
+      agentSessions: AgentSessionRepository(database),
     );
   }
 

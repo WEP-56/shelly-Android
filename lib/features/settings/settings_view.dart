@@ -9,11 +9,18 @@ import '../../core/ssh/known_host_repository.dart';
 import '../../core/ssh/known_hosts_controller.dart';
 import '../../core/ssh/ssh_models.dart';
 import '../../core/terminal/terminal_input.dart';
+import '../../ui/settings_tiles.dart';
+import '../agent/data/agent_session_repository.dart';
+import '../agent/data/agent_settings_repository.dart';
+import '../agent/presentation/agent_settings_section.dart';
 
 class SettingsView extends StatelessWidget {
   const SettingsView({
     required this.settings,
     required this.knownHosts,
+    required this.agentSettings,
+    required this.agentSessions,
+    required this.hostNames,
     required this.themePreference,
     required this.onSettingsChanged,
     required this.onThemeChanged,
@@ -22,6 +29,11 @@ class SettingsView extends StatelessWidget {
 
   final AppSettings settings;
   final KnownHostRepository knownHosts;
+  final AgentSettingsRepository agentSettings;
+  final AgentSessionRepository agentSessions;
+
+  /// Host id → display name, so the agent session list can group by device.
+  final Map<String, String> hostNames;
   final ThemePreference themePreference;
   final ValueChanged<AppSettings> onSettingsChanged;
   final ValueChanged<ThemePreference> onThemeChanged;
@@ -31,10 +43,10 @@ class SettingsView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 132),
       children: [
-        _Section(
+        SettingsSection(
           label: '外观',
           children: [
-            _SettingRow(
+            SettingsRow(
               icon: Icons.tune_rounded,
               label: '主题',
               trailing: _ThemeSegment(
@@ -42,7 +54,7 @@ class SettingsView extends StatelessWidget {
                 onChanged: onThemeChanged,
               ),
             ),
-            _SettingRow(
+            SettingsRow(
               icon: Icons.terminal_rounded,
               label: '字体大小',
               trailing: SizedBox(
@@ -96,7 +108,7 @@ class SettingsView extends StatelessWidget {
               (value) =>
                   onSettingsChanged(settings.copyWith(cursorBlink: value)),
             ),
-            _SettingRow(
+            SettingsRow(
               icon: Icons.keyboard_alt_outlined,
               label: '扩展快捷键',
               hint: '${settings.extraKeys.length} 个按键',
@@ -109,7 +121,7 @@ class SettingsView extends StatelessWidget {
             ),
           ],
         ),
-        _Section(
+        SettingsSection(
           label: '连接',
           children: [
             _toggle(
@@ -138,7 +150,7 @@ class SettingsView extends StatelessWidget {
               (value) =>
                   onSettingsChanged(settings.copyWith(compression: value)),
             ),
-            _SettingRow(
+            SettingsRow(
               icon: Icons.key_rounded,
               label: 'SSH 密钥',
               hint: '1 个密钥',
@@ -160,46 +172,12 @@ class SettingsView extends StatelessWidget {
             ),
           ],
         ),
-        _Section(
-          label: 'Agent',
-          children: [
-            _SettingRow(
-              icon: Icons.hub_outlined,
-              label: 'Provider',
-              hint: 'Responses · gpt-5',
-              onTap: () => _showListSheet(
-                context,
-                icon: Icons.hub_outlined,
-                title: 'Provider',
-                primary: 'OpenAI Responses',
-                secondary: '流式 · Tools · Loop',
-              ),
-            ),
-            _SettingRow(
-              icon: Icons.description_outlined,
-              label: 'AGENTS.md',
-              hint: 'Agent 工作规范',
-              onTap: () => _showSimpleSheet(
-                context,
-                icon: Icons.description_outlined,
-                title: 'AGENTS.md',
-                body: '只读终端上下文。所有命令必须先向用户申请。',
-              ),
-            ),
-            _SettingRow(
-              icon: Icons.search_rounded,
-              label: 'Web Search',
-              hint: 'API Key',
-              onTap: () => _showSimpleSheet(
-                context,
-                icon: Icons.search_rounded,
-                title: 'Web Search',
-                body: '搜索服务尚未配置',
-              ),
-            ),
-          ],
+        AgentSettingsSection(
+          settings: agentSettings,
+          sessions: agentSessions,
+          hostNames: hostNames,
         ),
-        _Section(
+        SettingsSection(
           label: '安全',
           children: [
             _toggle(
@@ -210,7 +188,7 @@ class SettingsView extends StatelessWidget {
               settings.biometric,
               (value) => onSettingsChanged(settings.copyWith(biometric: value)),
             ),
-            _SettingRow(
+            SettingsRow(
               icon: Icons.key_rounded,
               label: '已知主机',
               hint: '管理指纹',
@@ -218,7 +196,7 @@ class SettingsView extends StatelessWidget {
             ),
           ],
         ),
-        _Section(
+        SettingsSection(
           label: '反馈',
           children: [
             _toggle(
@@ -234,15 +212,15 @@ class SettingsView extends StatelessWidget {
             ),
           ],
         ),
-        const _Section(
+        const SettingsSection(
           label: '关于',
           children: [
-            _SettingRow(
+            SettingsRow(
               icon: Icons.info_outline_rounded,
               label: '版本',
               hint: 'Shelly 1.0.0',
             ),
-            _SettingRow(
+            SettingsRow(
               icon: Icons.balance_rounded,
               label: '开源许可',
               hint: 'MIT',
@@ -253,7 +231,7 @@ class SettingsView extends StatelessWidget {
     );
   }
 
-  _SettingRow _toggle(
+  SettingsRow _toggle(
     BuildContext context,
     IconData icon,
     String label,
@@ -261,135 +239,11 @@ class SettingsView extends StatelessWidget {
     bool value,
     ValueChanged<bool> onChanged,
   ) {
-    return _SettingRow(
+    return SettingsRow(
       icon: icon,
       label: label,
       hint: hint,
       trailing: Switch(value: value, onChanged: onChanged),
-    );
-  }
-}
-
-class _Section extends StatelessWidget {
-  const _Section({required this.label, required this.children});
-
-  final String label;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.shelly;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: colors.onSurface3,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Container(
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: colors.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: colors.line),
-            ),
-            child: Column(
-              children: [
-                for (var index = 0; index < children.length; index++) ...[
-                  children[index],
-                  if (index != children.length - 1)
-                    Divider(height: 1, thickness: 1, color: colors.line),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SettingRow extends StatelessWidget {
-  const _SettingRow({
-    required this.icon,
-    required this.label,
-    this.hint,
-    this.trailing,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final String? hint;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.shelly;
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-      child: Row(
-        children: [
-          Icon(icon, size: 19, color: colors.onSurface2),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (hint != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    hint!,
-                    style: TextStyle(fontSize: 11, color: colors.onSurface3),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (trailing != null)
-            trailing!
-          else if (onTap != null)
-            Icon(
-              Icons.chevron_right_rounded,
-              size: 18,
-              color: colors.onSurface3,
-            ),
-        ],
-      ),
-    );
-    if (onTap == null) {
-      return ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 58),
-        child: content,
-      );
-    }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 58),
-          child: content,
-        ),
-      ),
     );
   }
 }
@@ -828,51 +682,6 @@ Future<void> _showListSheet(
                 Clipboard.setData(ClipboardData(text: secondary));
                 Navigator.pop(context);
               },
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-Future<void> _showSimpleSheet(
-  BuildContext context, {
-  required IconData icon,
-  required String title,
-  required String body,
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (context) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 19),
-                const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Text(
-              body,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.65,
-                color: context.shelly.onSurface2,
-              ),
             ),
           ],
         ),

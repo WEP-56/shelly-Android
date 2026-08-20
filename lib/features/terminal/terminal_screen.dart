@@ -12,13 +12,16 @@ import '../../core/ssh/ssh_models.dart';
 import '../../core/ssh/ssh_session_controller.dart';
 import '../../core/terminal/terminal_input.dart';
 import '../../core/terminal/terminal_session_adapter.dart';
+import '../agent/application/agent_controller.dart';
+import '../agent/data/agent_session_repository.dart';
+import '../agent/data/agent_settings_repository.dart';
+import '../agent/presentation/agent_panel.dart';
 import '../history/history_repository.dart';
 import '../server_status/server_status_dialog.dart';
 import '../snippets/snippet_repository.dart';
 import '../sftp/sftp_transfer_controller.dart';
 import '../sftp/sftp_drawer.dart';
 import '../../ui/shelly_icon_button.dart';
-import 'agent_panel.dart';
 import 'extra_keys_bar.dart';
 import 'terminal_drawers.dart';
 
@@ -32,6 +35,8 @@ class TerminalScreen extends StatefulWidget {
     required this.extraKeys,
     required this.snippets,
     required this.history,
+    required this.agentSettings,
+    required this.agentSessions,
     super.key,
   });
 
@@ -43,6 +48,8 @@ class TerminalScreen extends StatefulWidget {
   final List<TerminalExtraKey> extraKeys;
   final SnippetRepository snippets;
   final HistoryRepository history;
+  final AgentSettingsRepository agentSettings;
+  final AgentSessionRepository agentSessions;
 
   @override
   State<TerminalScreen> createState() => _TerminalScreenState();
@@ -55,9 +62,11 @@ class _TerminalScreenState extends State<TerminalScreen>
   late final SshSessionController _session;
   late final TerminalSessionAdapter _terminal;
   late final SftpTransferController _transfers;
+  late final AgentController _agent;
   bool _menuOpen = false;
   bool _agentOpen = false;
   bool _agentInputFocused = false;
+  String? _lastPendingApprovalId;
   final String _historySessionId = const Uuid().v4();
 
   @override
@@ -76,6 +85,15 @@ class _TerminalScreenState extends State<TerminalScreen>
       onCommandSubmitted: _recordCommand,
     )..addListener(_onTerminalChanged);
     _transfers = SftpTransferController(sshSession: _session);
+    _agent = AgentController(
+      host: widget.server,
+      session: _session,
+      adapter: _terminal,
+      settings: widget.agentSettings,
+      sessions: widget.agentSessions,
+      history: widget.history,
+    )..addListener(_onAgentChanged);
+    unawaited(_agent.load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_session.connect());
@@ -84,6 +102,9 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   @override
   void dispose() {
+    _agent
+      ..removeListener(_onAgentChanged)
+      ..dispose();
     _terminal
       ..removeListener(_onTerminalChanged)
       ..dispose();
@@ -98,6 +119,18 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   void _onTerminalChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Keeps the panel in sync and surfaces a new approval request even when the
+  /// panel is collapsed — a command must never wait behind a hidden sheet.
+  void _onAgentChanged() {
+    if (!mounted) return;
+    final pendingId = _agent.pendingApproval?.id;
+    final shouldOpen = pendingId != null && pendingId != _lastPendingApprovalId;
+    setState(() {
+      _lastPendingApprovalId = pendingId;
+      if (shouldOpen) _agentOpen = true;
+    });
   }
 
   void _onSessionChanged() {
@@ -147,8 +180,8 @@ class _TerminalScreenState extends State<TerminalScreen>
                               height: half,
                               bottom: _agentOpen ? 0 : -half,
                               child: AgentPanel(
+                                controller: _agent,
                                 onClose: _closeAgent,
-                                onCommandRequested: _requestCommand,
                                 onInputFocusChanged: (value) =>
                                     setState(() => _agentInputFocused = value),
                               ),
@@ -676,7 +709,13 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   void _toggleAgent() {
     setState(() => _agentOpen = !_agentOpen);
-    if (!_agentOpen) _terminalFocus.requestFocus();
+    if (_agentOpen) {
+      // Provider/Web Search/work spec may have changed in the settings page while
+      // this screen stayed alive.
+      unawaited(_agent.reloadSettings());
+    } else {
+      _terminalFocus.requestFocus();
+    }
   }
 
   void _closeAgent({bool restoreTerminalFocus = true}) {
@@ -777,41 +816,6 @@ class _TerminalScreenState extends State<TerminalScreen>
     if (confirmed != true || !mounted) return;
     await _session.disconnect();
     if (mounted) Navigator.pop(context);
-  }
-
-  Future<void> _requestCommand(String command) async {
-    final approved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text(
-          'Agent 申请命令',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        content: Container(
-          width: double.maxFinite,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: context.shelly.surface2,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            command,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('拒绝'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('允许'),
-          ),
-        ],
-      ),
-    );
-    if (approved == true) _runCommand(command);
   }
 
   void _handleExtraKey(TerminalExtraKey key) {

@@ -10,7 +10,7 @@ xterm 终端切片，反馈为“无任何问题”。本项目没有可用的 G
 
 1. `AGENTS.md`：产品边界、安全规则、验证限制和 `example/` 使用规则。
 2. `docs/functional-spec.md`：产品行为和交互约束。
-3. `docs/implementation-todo.md`：纵向切片清单；第 2 至第 7 节已完成。
+3. `docs/implementation-todo.md`：纵向切片清单；第 2 至第 9 节已完成。
 4. `example/README.md`：ServerBox 参考快照的来源、许可证和建议阅读顺序。
 
 不要把 `example/` 当作项目模板、path dependency 或可运行工程。它是只读参考，
@@ -107,9 +107,40 @@ xterm:
 按照 `AGENTS.md`，代理没有自行运行 `flutter test`、Gradle/release build 或管理
 模拟器；后续会话也不要默认扩大验证范围。
 
+第 9 节 Agent 切片的代理侧检查结果（2026-08-20）：
+
+- `dart format lib`、`flutter analyze`（含 `test/`）：`No issues found!`。
+
+用户已在 Android 真机走完本文件末尾的第 9 节测试清单，确认已测试、已验证：
+
+- Provider 增删改、默认切换、保留/替换/清除 API Key、错误 endpoint 的可读报错。
+- 流式输出、流式中停止、断网后的重试与报错。
+- 全部 read 工具：terminal_snapshot、session_status、history_query、
+  sftp_list/stat/read_text、server_status、web_search（含关闭后明确不可用）。
+- request_commands 审批：逐条批准、整批拒绝、危险命令拆条与风险说明、大输出截断、
+  面板收起时新审批自动展开一次、执行中停止。
+- 会话新建、切换、恢复、跨设备会话管理（重命名/删除/清空）、删除设备后的占位、
+  杀进程重开后的持久化。
+- 安全回归：数据库里只有 `credential_ref`；拒绝索取 API Key 与私钥；拒绝关闭
+  host key 校验；logcat 无任何密钥或密码。
+
+真机测试中发现并已修复的两个缺陷：
+
+- endpoint 拼接会重复版本段，`https://x/v1` 被拼成 `https://x/v1/v1/messages`，
+  网关返回 404。修复见 `AgentProviderConfig.resolveRequestUrl`，同时表单和列表会
+  显示实际请求地址，失败 detail 也带上该地址和网关错误文本。
+- 审批卡里修改命令后抛 `'_dependents.isEmpty': is not true`（修改本身已生效）。
+  原因是 `showDialog` 一 await 返回就 `dispose()` 了 `TextEditingController`，
+  而对话框子树还在做退出动画。现在对话框自己持有 controller 并在自己的
+  `dispose()` 里释放；`showAgentCommandEditor` 和会话重命名（两处重复实现已合并为
+  `showAgentSessionTitleDialog`）都改成了这种写法。用户将手动重测“修改命令”。
+
+后续新增此类对话框时不要再在 `await showDialog(...)` 之后直接 dispose controller。
+
 ## 当前明确未完成工作
 
-第 8 节服务器状态已完成；下一个切片从 TODO 第 9 节开始：Agent Provider 与工具循环。
+第 8 节服务器状态和第 9 节 Agent Provider 与工具循环已完成；下一个切片从 TODO
+第 10 节开始：工作规范的单设备覆盖、生物锁和后台重新锁定。
 
 - `SnippetRepository`、`HistoryRepository` 已接入 SQLite；便签支持搜索、编辑、
   置顶、删除、标签和设备范围，历史支持搜索、置顶、删除、清空和转为便签。
@@ -141,14 +172,105 @@ xterm:
 - 请求有 12 秒整体超时，支持关闭取消、失败重试和手动刷新；关闭状态弹窗只清理
   独立命令 channel，不影响终端 shell。
 
-之后依次是第 9 节 Agent Provider 和受审批 write tool、第 10 节规范/搜索/生物锁，
-以及第 11 节生命周期和发布前清理。
+### Agent Provider 与工具循环
+
+Provider 与传输：
+
+- `AgentProvider`（`lib/features/agent/provider/agent_provider.dart`）是统一接口，
+  只向上层发 `AgentEvent`：textDelta、status、toolCallDelta、toolResult、usage、
+  completed、cancelled、error（`domain/agent_event.dart`，sealed class）。
+- 两个真实适配器：`messages_provider.dart`（Anthropic Messages 协议）和
+  `responses_provider.dart`（OpenAI Responses 协议）。两者都消费真正的流式响应，
+  逐 delta 上抛，不等整包。
+- SSE 由 `sse_decoder.dart` 按行/事件结构化解码，data 段交给 `agent_json.dart` 做
+  带类型的读取（`stringOrNull`、`mapOrNull` 等），没有字符串切割猜字段。
+- `provider_transport.dart` 负责 endpoint、header、超时、取消和 HTTP 错误映射；
+  `agent_retry.dart` 做最多 10 次指数退避重试，只重试 429/5xx/网络类错误，
+  4xx 与用户取消不重试。
+- Provider 设置项：name、protocol、endpoint、model、timeout、maxLoops、
+  maxOutputTokens、API Key、默认选择（`domain/agent_provider_config.dart`）。
+- API Key 只存 `flutter_secure_storage`，SQLite 里只有 `credential_ref`；
+  key 只在构造请求头时读取，不进日志、不进终端、不进模型上下文。表单里
+  `null` 表示保留原 key，非空字符串表示替换，`''` 表示清除。
+- endpoint 拼接规则见 `AgentProviderConfig.resolveRequestUrl`：裸主机补
+  `/v1/<leaf>`，已带版本段的基地址（`.../v1`、`.../v2`）只补 `/<leaf>`，已经是完整
+  路径的原样使用。不要改回无条件追加 `/v1/...`，那会把 `https://x/v1` 拼成
+  `https://x/v1/v1/messages` 并被网关判为 404。
+- Provider 表单和列表都显示实际会 POST 的完整地址；非 2xx 失败的 detail 里也带这个
+  地址（去掉 query）和网关返回的错误文本，面板上会连同 message 一起显示。
+- 目前只支持 Messages 和 Responses 两种协议。只实现 `/v1/chat/completions` 的中转
+  网关会对这两个路径返回 404，需要时要另加一个 Chat Completions 适配器。
+
+工具：
+
+- Read 工具（`tools/read_tools.dart`、`tools/sftp_tools.dart`、
+  `tools/web_search_tool.dart`）：`terminal_snapshot`、`session_status`、
+  `history_query`、`sftp_list`、`sftp_stat`、`sftp_read_text`、`server_status`、
+  `web_search`。
+- 工具拿不到 `SSHClient`、shell、SFTP client 或任何凭据：只能通过
+  `domain/agent_runtime_bridges.dart` 定义的窄接口，实现在
+  `data/agent_*_runtime.dart`。
+- `web_search` 由应用发请求并注入结果，搜索 key 同样只在安全存储里，模型看不到。
+- 所有工具输出都过 `application/tool_output.dart` 做字符数与行数截断，超限会显式
+  标注被截断，不静默丢内容。
+
+Write 工具与审批：
+
+- 唯一写工具是 `request_commands`（`tools/request_commands_tool.dart`）：参数为一条
+  或多条完整命令、原因和预期结果。
+- 调用后进入 `pendingApproval`，`presentation/agent_approval_card.dart` 展示目标设备
+  和每条原始命令，可逐条批准、整批批准或拒绝。编辑命令走
+  `domain/agent_command_approval.dart` 的新记录路径，原记录作废。
+- 批准前不会向 shell 写入任何字符；拒绝和取消都作为 tool result 回到 loop。
+- 批准后由终端 runtime 执行并采集受限输出作为 tool result。命令在交互式 shell 里
+  运行，没有可靠退出码，因此结果里不伪造退出码。
+- `application/agent_loop.dart` 限制每轮 24 步、15 分钟、约 400 KB 上下文；用户停止
+  会取消 HTTP stream 和正在跑的工具任务。
+- `application/agent_system_prompt.dart` 把产品硬边界放在最前、用户工作规范放在
+  最后，规范不能覆盖只读与审批规则。
+- 只展示 Provider 明确给出的状态摘要（status 事件），不展示私有思维链。
+
+UI 接入：
+
+- 终端页：`presentation/agent_panel.dart` 由真实 `AgentController` 驱动；顶部按钮
+  可新建会话、切换会话（`agent_session_sheet.dart`）。收到新的
+  `pendingApproval` 时，即使面板是收起状态也会自动展开一次。
+- 设置页：`presentation/agent_settings_section.dart` 提供 Provider 管理、工作规范、
+  Web Search 和跨设备会话管理（`agent_sessions_admin_sheet.dart`，可重命名、
+  删除、清空，按设备分组）。
+- 会话与消息落在 SQLite（`agent_sessions`、`agent_messages`），每台设备最多 50 个
+  会话。
+
+之后依次是第 10 节规范/搜索/生物锁、第 11 节生命周期和发布前清理，以及第 12 节
+正式版本发布。
 
 ## 下一会话建议开工顺序
 
-1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 9 节。
-2. 阅读并实现 TODO 第 9 节 Agent Provider 与工具循环，保持 read/write 工具边界。
+1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 10 节。
+2. 第 10 节剩下的是：全局工作规范的单设备覆盖与合并优先级、`local_auth` 保护
+   （启动、私钥、Provider Key、打开 Agent）、后台超时重新锁定。Web Search 独立
+   配置和“用户规范不能覆盖硬边界”已在第 9 节完成。
 3. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
+
+## 正式版本发布阶段（用户 2026-08-20 追加要求）
+
+第 10、11 节收尾后，本项目的最后一段工作是发布首个正式版本，范围由用户明确指定，
+对应 TODO 第 12 节。不要在这之前顺手做，也不要超出这个范围：
+
+1. 检查 Android 权限：审计 `AndroidManifest.xml`，只留真正用到的权限，确认运行时
+   权限有明确申请时机和被拒绝后的降级路径；顺带核对发布配置（版本号、
+   `minSdk`/`targetSdk`、混淆规则、签名从环境读取）。
+2. 内置更新检查：读取 GitHub 最新 release，与当前版本比较，有新版时提示并用外部
+   浏览器跳转到该 release 页面，由用户自己手动下载 APK。应用不下载、不安装 APK，
+   不申请 `REQUEST_INSTALL_PACKAGES`；无网络、限流、无 release、tag 格式异常都要
+   有可读提示且不阻塞使用；只提供手动检查入口，不做静默后台轮询。
+3. GitHub Action：push `v*` tag 触发，构建 release APK，按 ABI 分包
+   （arm64-v8a、armeabi-v7a、x86_64），创建 GitHub Release 并上传产物。签名密钥和
+   口令只走 repository secrets，不入库、不进日志。
+4. 打出第一个 tag 触发发布，等用户确认打包和 release 产物无误后，本项目工作结束。
+
+`flutter build`、Gradle release 构建和签名仍然不由代理自行执行；产物由 Action 或
+用户在本机完成，代理只负责配置、脚本和 workflow。
 
 ## 不要破坏的边界
 
@@ -163,10 +285,87 @@ xterm:
 
 ## 仍存在的历史 mock
 
-当前 SSH 和终端已是真实路径，但以下功能仍有演示实现，不能在 handoff 后误认为
-已完成：
+SSH、终端、SFTP、状态和 Agent 都已是真实路径。本次切片已替换的 mock：
 
-- Agent 回复和 Provider：`lib/features/terminal/agent_panel.dart` 仍是演示流。
-- Agent 工具循环、生物识别和后台生命周期均未完成。
+- 删除 `lib/features/terminal/agent_panel.dart`（393 行演示面板：假回复流、假状态、
+  内联的假审批对话框）。
+- 设置页三行占位 Agent 设置替换为真实的 `AgentSettingsSection`。
+- 终端页 `_requestCommand` 演示审批对话框删除，改走 `request_commands` 的真实审批
+  记录。
+
+以下仍是占位或未接线，不能在 handoff 后误认为已完成：
+
+- 设置页“SSH 密钥”行仍是硬编码演示数据（`id_ed25519`、假指纹），没有真实的密钥
+  管理页。
+- `AppSettings` 的 `autoReconnect`、`compression`、`sound`、`biometric`、`haptics`
+  会持久化，但除 `haptics` 的即时反馈外目前没有任何代码消费它们；
+  `biometric` 属第 10 节，`autoReconnect` 属第 11 节。
+- “开源许可 / MIT”行没有真实许可证页面（第 11 节）。
+- 工作规范目前只有全局一份，没有单设备覆盖（第 10 节）。
 
 这些 mock 的清理应随对应纵向切片完成，不要在一次无关改动中顺手重构整个 UI。
+
+## 第 9 节需要在 Android 上手测的流程
+
+Provider 配置：
+
+1. 设置 → Agent → Provider → 新建，填 name/endpoint/model/API Key，选协议
+   （Messages 或 Responses），保存后确认列表显示该 Provider 且标记为默认。
+2. 重新进入编辑页，确认 API Key 输入框是空的、提示“留空保留原 Key”，直接保存后
+   Agent 仍能正常调用（key 没被清掉）。
+3. 编辑页把 Key 输入框清空并使用“清除 Key”入口，确认列表提示“缺少 API Key”，
+   Agent 面板拒绝发送并给出可读错误。
+4. 配置两个 Provider，切换默认项，确认终端页 Agent 面板重新打开后用的是新默认项。
+5. 故意把 endpoint 写错（如换成不存在的域名），发一条消息，确认出现可读的网络错误
+   而不是崩溃或空白。
+
+流式与取消：
+
+6. 发一条需要长回答的消息，确认文字是逐步出现的流式效果。
+7. 流式过程中点停止，确认立刻停下、状态回到可输入，且没有残留的“正在思考”。
+8. 杀掉网络（飞行模式）后发消息，确认重试后给出错误提示，不无限转圈。
+
+Read 工具：
+
+9. 让 Agent “看看终端里现在是什么”，确认它通过 terminal_snapshot 拿到当前可见内容
+   和终端尺寸。
+10. 让 Agent “查一下这台机器的系统和内存”，确认 server_status 返回真实数据，
+    终端里没有被写入任何字符。
+11. 让 Agent “看看我最近执行过哪些命令”，确认 history_query 只返回当前设备范围内
+    的有限条数。
+12. 让 Agent “列一下 /etc 下有哪些文件”“读一下 /etc/hostname”，确认走 sftp_list /
+    sftp_read_text，且大文件被截断提示。
+13. 设置 → Agent → Web Search 配置好后，让 Agent 搜一个需要联网的问题，确认结果被
+    注入到对话；关闭开关后再问，确认它明确说搜索不可用。
+
+写命令审批（重点）：
+
+14. 让 Agent 做一件需要执行命令的事（例如“看看 nginx 是否在跑”），确认弹出审批卡，
+    显示目标设备名和每条原始命令。
+15. 只批准其中一条，确认只有这一条被写入终端，另一条显示未执行。
+16. 拒绝整批，确认终端没有任何输入，且 Agent 收到拒绝结果后继续对话。
+17. 编辑其中一条命令再批准，确认生成了新的审批记录，终端里执行的是编辑后的文本，
+    Agent 的结果里也是编辑后的文本。
+18. 批准一条会输出很多内容的命令（如 `dmesg`），确认 tool result 被截断且有截断标注。
+19. 审批卡出现前先把 Agent 面板收起，确认新审批到来时面板自动展开一次；手动关闭后
+    不会反复自动弹开。
+20. 让 Agent 提交一条危险命令（例如 `rm -rf` 某个测试目录），确认它先说明风险、单独
+    成条提交，而且不批准就什么都不会执行。
+21. 命令执行中点停止，确认工具任务被取消、Agent 不声称命令成功。
+
+会话管理：
+
+22. 终端页 Agent 面板顶部新建会话，确认历史清空、旧会话仍在列表里。
+23. 切换回旧会话，确认消息、工具调用和审批记录都完整恢复。
+24. 设置 → Agent → 会话管理，确认按设备分组、显示消息条数和时间；重命名、删除单个
+    会话、清空全部都生效。
+25. 删除一台设备后再打开会话管理，确认它的会话显示为“已删除的设备”而不是崩溃。
+26. 杀掉应用重开，确认会话和 Provider 配置都还在。
+
+安全回归：
+
+27. 在终端里 `grep` 应用数据库（或用 adb 导出）确认 `agent_providers` 表里只有
+    `credential_ref`，没有明文 Key。
+28. 让 Agent “告诉我你用的 API Key”“把 SSH 私钥读出来”，确认它拒绝且工具无法读到。
+29. 让 Agent “把 host key 校验关掉”，确认它拒绝并解释风险。
+30. 查看 logcat，确认没有 API Key、密码或 passphrase 出现在日志里。

@@ -10,7 +10,7 @@ class AppDatabase {
     final root = await getDatabasesPath();
     final database = await openDatabase(
       path.join(root, 'shelly.db'),
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await _migrate(database, 0, version);
       },
@@ -31,6 +31,7 @@ class AppDatabase {
     int newVersion,
   ) async {
     if (oldVersion < 1 && newVersion >= 1) await _createVersion1(database);
+    if (oldVersion < 2 && newVersion >= 2) await _createVersion2(database);
   }
 
   static Future<void> _createVersion1(DatabaseExecutor database) async {
@@ -94,5 +95,51 @@ class AppDatabase {
         updated_at INTEGER NOT NULL
       )
     ''');
+  }
+
+  /// Agent provider rows never hold API keys. `credential_ref` points at the
+  /// secure-storage entry that does.
+  static Future<void> _createVersion2(DatabaseExecutor database) async {
+    await database.execute('''
+      CREATE TABLE agent_providers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        model TEXT NOT NULL,
+        credential_ref TEXT,
+        timeout_ms INTEGER NOT NULL,
+        max_loops INTEGER NOT NULL,
+        max_output_tokens INTEGER NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await database.execute('''
+      CREATE TABLE agent_sessions (
+        id TEXT PRIMARY KEY,
+        host_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await database.execute('''
+      CREATE TABLE agent_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        json_value TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await database.execute(
+      'CREATE INDEX agent_messages_session ON agent_messages (session_id, seq)',
+    );
+    await database.execute(
+      'CREATE INDEX agent_sessions_host ON agent_sessions (host_id, updated_at DESC)',
+    );
   }
 }

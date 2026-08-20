@@ -46,6 +46,12 @@ class TerminalSessionAdapter extends ChangeNotifier {
   TerminalModifierState get controlState => _controlState;
   TerminalModifierState get altState => _altState;
 
+  /// Characters typed on the current line that have not been submitted yet.
+  ///
+  /// Empty when tracking is not reliable (an escape sequence moved the cursor),
+  /// so a reader never sees a half-guessed input line.
+  String get pendingInput => _inputLineReliable ? _inputLine : '';
+
   void toggleModifier(TerminalExtraKey key, {required bool lock}) {
     switch (key) {
       case TerminalExtraKey.control:

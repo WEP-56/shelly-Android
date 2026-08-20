@@ -44,6 +44,7 @@ dependencies:
       url: https://github.com/lollipopkit/xterm.dart.git
       ref: 3c53a85131794854f2d3fb5d19a700bbb337e173
   file_picker: ^11.0.3
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

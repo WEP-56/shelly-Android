@@ -142,37 +142,37 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ### 9.1 Provider
 
-- [ ] 定义统一 `AgentProvider`，输出 textDelta、status、toolCallDelta、toolResult、
+- [x] 定义统一 `AgentProvider`，输出 textDelta、status、toolCallDelta、toolResult、
   usage、completed、cancelled、error 事件。
-- [ ] 实现 Messages 协议适配器和 Responses 协议适配器；都使用真正的流式响应。
-- [ ] SSE/JSON 使用结构化解析器，不通过字符串切割猜事件字段。
-- [ ] Provider 设置包括 endpoint、model、API Key、timeout、最大 loop 和默认选择。
-- [ ] API Key 只从安全存储读取，不进入日志、SQLite、终端或模型上下文。
+- [x] 实现 Messages 协议适配器和 Responses 协议适配器；都使用真正的流式响应。
+- [x] SSE/JSON 使用结构化解析器，不通过字符串切割猜事件字段。
+- [x] Provider 设置包括 endpoint、model、API Key、timeout、最大 loop 和默认选择。
+- [x] API Key 只从安全存储读取，不进入日志、SQLite、终端或模型上下文。
 
 ### 9.2 Read 工具
 
-- [ ] `terminal_snapshot`：可见内容、有限 scrollback、当前输入和终端尺寸。
-- [ ] `session_status`：连接状态、当前设备和非秘密会话信息。
-- [ ] `history_query`：受数量和设备范围限制的命令历史。
-- [ ] `sftp_list/stat/read_text`：只读目录、属性和受大小限制的文本文件。
-- [ ] `server_status`：复用状态服务的只读快照。
-- [ ] `web_search`：由应用注入结果，模型永远看不到搜索 API Key。
+- [x] `terminal_snapshot`：可见内容、有限 scrollback、当前输入和终端尺寸。
+- [x] `session_status`：连接状态、当前设备和非秘密会话信息。
+- [x] `history_query`：受数量和设备范围限制的命令历史。
+- [x] `sftp_list/stat/read_text`：只读目录、属性和受大小限制的文本文件。
+- [x] `server_status`：复用状态服务的只读快照。
+- [x] `web_search`：由应用注入结果，模型永远看不到搜索 API Key。
 
 ### 9.3 唯一 Write 工具
 
-- [ ] 只提供 `request_commands`，参数包含一条或多条完整命令、原因和预期结果。
-- [ ] 调用后进入 pendingApproval，完整展示目标设备和每条原始命令。
-- [ ] 用户可逐条批准、整批批准、拒绝；编辑后的命令必须生成新的审批记录。
-- [ ] 未批准前不能向 shell 写入任何字符；拒绝结果返回 Agent loop。
-- [ ] 批准执行后采集受限输出并作为 tool result 回传，继续 loop。
-- [ ] 每轮限制步数、总时长、上下文大小；用户停止后取消 HTTP stream 和工具任务。
-- [ ] 只展示 Provider 明确允许的状态摘要，不展示私有思维链。
+- [x] 只提供 `request_commands`，参数包含一条或多条完整命令、原因和预期结果。
+- [x] 调用后进入 pendingApproval，完整展示目标设备和每条原始命令。
+- [x] 用户可逐条批准、整批批准、拒绝；编辑后的命令必须生成新的审批记录。
+- [x] 未批准前不能向 shell 写入任何字符；拒绝结果返回 Agent loop。
+- [x] 批准执行后采集受限输出并作为 tool result 回传，继续 loop。
+- [x] 每轮限制步数、总时长、上下文大小；用户停止后取消 HTTP stream 和工具任务。
+- [x] 只展示 Provider 明确允许的状态摘要，不展示私有思维链。
 
 ## 10. Agent 工作规范、搜索和生物锁
 
 - [ ] Settings 支持全局 `AGENTS.md` 与单设备覆盖，明确合并优先级。
-- [ ] 产品只读与审批规则是硬边界，用户规范不能覆盖。
-- [ ] Web Search provider 独立配置 endpoint、API Key、超时和启用范围。
+- [x] 产品只读与审批规则是硬边界，用户规范不能覆盖。
+- [x] Web Search provider 独立配置 endpoint、API Key、超时和启用范围。
 - [ ] 使用 `local_auth` 保护应用启动、查看私钥、查看 Provider Key 和打开 Agent。
 - [ ] 处理无生物硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
 - [ ] App 进入后台超过可配置时间后重新锁定秘密页面。
@@ -186,12 +186,28 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 - [ ] 为第三方包补充许可证页面，确认 `example/` 不进入 APK 和发布源码依赖。
 - [ ] 检查 release 日志、崩溃信息和数据库，确保没有密码、私钥、passphrase 或 Key。
 
-## 12. 新会话的直接开工顺序
+## 12. 正式版本发布
+
+- [ ] 审计 `AndroidManifest.xml`：只保留真正用到的权限，删除无用声明；确认运行时
+      权限（通知、存储/文件选择、生物识别等）都有明确申请时机和被拒绝后的降级路径。
+- [ ] 确认发布配置：`applicationId`、版本号与 `pubspec.yaml` 一致、`minSdk`/
+      `targetSdk`、R8/混淆规则不破坏反射依赖、release 签名从环境读取而不入库。
+- [ ] 内置更新检查：读取 GitHub 最新 release 的 tag 与说明，与当前版本比较，有新版
+      时提示并用外部浏览器跳到该 release 页面由用户手动下载。应用自身不下载、不安
+      装 APK，不申请 `REQUEST_INSTALL_PACKAGES`。
+- [ ] 更新检查要处理无网络、限流、无 release、tag 格式异常，失败只提示不阻塞使用；
+      支持手动检查入口，不做静默后台轮询。
+- [ ] GitHub Action：push tag（`v*`）触发，构建 release APK，按 ABI 分包
+      （arm64-v8a、armeabi-v7a、x86_64），产物带版本名，创建 GitHub Release 并上传。
+- [ ] Action 不得把签名密钥或口令写进仓库或日志，全部走 repository secrets。
+- [ ] 打第一个 tag 触发发布，等用户确认打包与 release 产物无误后收尾。
+
+## 13. 新会话的直接开工顺序
 
 1. 阅读 `AGENTS.md`、`functional-spec.md`、本文件和 `docs/handoff.md`。
-2. 从第 8 节服务器状态开始，复用 `SshSessionController` 的会话所有权边界。
-3. 保持状态请求按需、可取消、有超时和重试，不做后台持续轮询。
-4. 完成 format/analyze 后交给用户在 Android 真机验证，再进入第 9 节 Agent。
+2. 从第 10 节开始：全局工作规范的单设备覆盖与合并优先级，以及 `local_auth`。
+3. 生物识别必须处理无硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
+4. 完成 format/analyze 后交给用户在 Android 真机验证，再进入第 11、12 节收尾。
 
 每个纵向切片结束时，更新本文件的勾选状态，并在交付中列出：已替换的 mock、
 仍存在的 mock、静态检查结果，以及需要用户在 Android 上手测的确切流程。
