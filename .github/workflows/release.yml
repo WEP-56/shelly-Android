@@ -76,6 +76,19 @@ jobs:
           SHELLY_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: flutter build apk --release --split-per-abi
 
+      - name: Report R8 missing rules on failure
+        # The runner is discarded after the job, so R8's missing_rules.txt has to
+        # be printed here or the next attempt has to guess.
+        if: failure()
+        run: |
+          missing_rules='build/app/outputs/mapping/release/missing_rules.txt'
+          if [ -f "$missing_rules" ]; then
+            echo "--- $missing_rules ---"
+            cat "$missing_rules"
+          else
+            echo "no missing_rules.txt; the failure is not an R8 missing-class error"
+          fi
+
       - name: Collect artifacts
         id: artifacts
         run: |

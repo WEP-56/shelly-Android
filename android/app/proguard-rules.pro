@@ -23,6 +23,16 @@
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
 
+# The Flutter embedding ships Play Store split-install support
+# (FlutterPlayStoreSplitApplication, PlayStoreDeferredComponentManager) that
+# references the Play Core library. This app has no deferred components and does
+# not depend on Play Core, so those classes are unreachable at runtime: the
+# application class is FlutterApplication and nothing installs a split. Without
+# this rule R8 turns the dangling references into "Missing class" errors and
+# fails :app:minifyReleaseWithR8. Do not add the Play Core dependency to silence
+# it; the app must not gain a Play Store dependency it never uses.
+-dontwarn com.google.android.play.core.**
+
 # Keep stack traces readable in release crash reports. Only file names and line
 # numbers are kept; no secret material is ever written to logs or crash text.
 -keepattributes SourceFile,LineNumberTable

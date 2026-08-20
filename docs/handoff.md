@@ -297,6 +297,16 @@ UI 接入：
   androidx.security（flutter_secure_storage 依赖），保留 SourceFile/LineNumberTable
   方便看崩溃栈。如果真机上 release 包出现只有混淆才有的异常，先把
   `isMinifyEnabled` 关掉定位，再补具体 keep 规则，不要整包 `-keep class **`。
+- 第一次 CI release 构建在 `:app:minifyReleaseWithR8` 失败：Flutter embedding 里的
+  `FlutterPlayStoreSplitApplication` 和 `PlayStoreDeferredComponentManager` 引用
+  Play Core，而本项目没有 deferred components、也不依赖 Play Core，R8 把这些悬空
+  引用报成 `Missing class`。修复是在 `proguard-rules.pro` 加
+  `-dontwarn com.google.android.play.core.**`。不要为了消掉它去添加 Play Core
+  依赖。日志里同时出现的 `Already watching path: .../android` 是 Gradle
+  file-watching 的无害提示，不是失败原因。
+- workflow 里有一个 `if: failure()` 的步骤会打印
+  `build/app/outputs/mapping/release/missing_rules.txt`；runner 用完即弃，下次 R8
+  再报缺类时直接看这段输出，不要靠猜。
 - `applicationId` `com.wep56.shelly_android`，versionName/versionCode 仍由 Flutter
   从 `pubspec.yaml` 注入；minSdk 24、targetSdk 36（跟随 Flutter 默认）。
 
