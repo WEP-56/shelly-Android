@@ -3,8 +3,8 @@
 更新日期：2026-08-20
 
 这份文档供下一个会话直接接手。用户已经在 Android 真机上验证当前 SSH 与
-xterm 终端切片，反馈为“无任何问题”。本项目没有可用的 Git 仓库，以下状态以
-当前文件和 `pubspec.lock` 为准。
+xterm 终端切片，反馈为“无任何问题”。仓库为
+<https://github.com/WEP-56/shelly-Android>，主分支 `main`。
 
 ## 先读这些文件
 
@@ -271,6 +271,87 @@ UI 接入：
 
 `flutter build`、Gradle release 构建和签名仍然不由代理自行执行；产物由 Action 或
 用户在本机完成，代理只负责配置、脚本和 workflow。
+
+### 第 12 节已完成内容（2026-08-20）
+
+权限审计（`android/app/src/main/AndroidManifest.xml`）：
+
+- 补上了 `android.permission.INTERNET`。此前它只在 `src/debug` 和 `src/profile`
+  的 manifest 里，release APK 合并后没有网络权限，SSH、Provider 和更新检查在正式
+  包里会全部失败。这是本次最关键的修复。
+- manifest 里用注释写明了故意不申请的权限：`REQUEST_INSTALL_PACKAGES`（不下载、
+  不安装 APK）、读写外部存储（上传下载走 SAF 文件选择器）、`POST_NOTIFICATIONS`
+  （没有通知和前台服务）、`USE_BIOMETRIC`（第 10 节还没实现）。
+- 因此应用没有任何运行时权限申请。SAF 取消（返回 null）和打开选择器失败都已在
+  `sftp_drawer.dart` 的 `_pickUpload`/`_download` 里给出可读提示。
+- `<queries>` 增加了 `VIEW` + `https` 意图，供 url_launcher 在 API 30+ 解析浏览器。
+
+发布配置（`android/app/build.gradle.kts`、`android/app/proguard-rules.pro`）：
+
+- release 签名从环境变量 `SHELLY_KEYSTORE_PATH`、`SHELLY_KEYSTORE_PASSWORD`、
+  `SHELLY_KEY_ALIAS`、`SHELLY_KEY_PASSWORD` 读取，其次回退到被 gitignore 的
+  `android/key.properties`；两者都没有时回退 debug 签名，并在 Gradle 日志里显式
+  警告，不会静默产出“看起来正式”的包。密钥内容不进仓库、不进日志。
+- release 开启 `isMinifyEnabled` 和 `isShrinkResources`，keep 规则集中在
+  `proguard-rules.pro`：Flutter embedding/plugin registrant、Tink 与
+  androidx.security（flutter_secure_storage 依赖），保留 SourceFile/LineNumberTable
+  方便看崩溃栈。如果真机上 release 包出现只有混淆才有的异常，先把
+  `isMinifyEnabled` 关掉定位，再补具体 keep 规则，不要整包 `-keep class **`。
+- `applicationId` `com.wep56.shelly_android`，versionName/versionCode 仍由 Flutter
+  从 `pubspec.yaml` 注入；minSdk 24、targetSdk 36（跟随 Flutter 默认）。
+
+内置更新检查（`lib/features/update/`）：
+
+- `domain/app_version.dart`：只接受 `v1.2`、`1.2.3`、可选 `-beta.1` 和 `+build`
+  形式，其它 tag 一律报“不是可比较的版本号”，不猜测。同 core 版本下正式版大于
+  预发布版。
+- `data/github_release_client.dart`：匿名 GET
+  `api.github.com/repos/WEP-56/shelly-Android/releases/latest`，15 秒超时，自己持有
+  并关闭 `http.Client`。错误映射成 `UpdateCheckException`：超时、网络/TLS、
+  403/429 限流（读 `x-ratelimit-remaining`）、404 无 release、非 2xx、JSON 结构异常
+  或缺 `tag_name`。没有任何 token，所以这条路径不可能泄露凭据。
+- `application/update_controller.dart`：`idle/checking/upToDate/updateAvailable/
+  failed`，只在用户点击时发一次请求，没有启动检查和后台轮询；失败带
+  `canRetry`（网络/超时/限流/非 2xx 可重试，无 release、tag 异常不可重试）。
+- 当前版本来自 `package_info_plus`（读 Android `versionName`/`versionCode`），不再
+  用硬编码的 “Shelly 1.0.0”。
+- `presentation/update_release_dialog.dart`：展示 `当前版本 → tag`、release 名称、
+  日期和截断到 1200 字的说明，按钮用 `url_launcher` 以
+  `LaunchMode.externalApplication` 打开 release 页面；没有可用浏览器时把链接复制到
+  剪贴板并提示，不静默失败。应用不下载、不安装 APK。
+- 设置页入口：`lib/features/settings/about_section.dart` 的“关于”分区（版本、
+  检查更新、开源许可）。“开源许可 / MIT”仍是占位（第 11 节）。
+
+发布流水线（`.github/workflows/release.yml`）：
+
+- `push` `v*` tag 触发，`permissions: contents: write`。
+- 先校验 tag 与 `pubspec.yaml` 的 `version:` 名称一致，不一致直接失败，避免发出
+  版本号和包内版本不符的 release。
+- `flutter build apk --release --split-per-abi`，产物重命名为
+  `shelly-<version>-<abi>.apk`（arm64-v8a、armeabi-v7a、x86_64），附带
+  `SHA256SUMS.txt`，由 `softprops/action-gh-release` 创建 Release 并上传，tag 带 `-`
+  时自动标记为 prerelease。
+- 签名走 repository secrets：`ANDROID_KEYSTORE_BASE64`（base64 后的 jks，解码到
+  `$RUNNER_TEMP`，不落在工作区）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、
+  `ANDROID_KEY_PASSWORD`。没配置 secrets 时构建仍会成功，但 release 说明里会明确写
+  “使用 debug 签名，仅供测试安装”。
+
+### 用户仍需自己做的事
+
+1. 在仓库 Settings → Secrets and variables → Actions 配置上面四个 secret，否则
+   产物是 debug 签名。配置后重新打一个 tag 即可换成正式签名。
+2. 监控 Action 运行结果，安装对应 ABI 的 APK 做真机验证。
+3. release 包是第一次开启 R8/资源压缩的构建，除了更新检查，最好顺带回归一次
+   SSH 连接、SFTP 上传下载和 Agent 请求，确认混淆没有影响插件。
+
+### 更新检查需要在 Android 上手测的流程
+
+1. 设置 → 关于，确认“版本”显示真实的 `1.0.0 (1)` 而不是硬编码文本。
+2. 点“检查更新”，仓库已有 v1.0.0 时应提示“已是最新版本”。
+3. 把 `pubspec.yaml` 版本临时改小（或安装旧包）后再检查，确认弹出新版本对话框，
+   点“打开 Release 页面”会跳到系统浏览器的 release 页。
+4. 飞行模式下检查，确认提示“无法连接 GitHub”并可重试，界面不卡住。
+5. 连续快速检查多次直到被 GitHub 限流（或用无 release 的仓库），确认提示可读。
 
 ## 不要破坏的边界
 

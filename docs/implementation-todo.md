@@ -188,26 +188,37 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ## 12. 正式版本发布
 
-- [ ] 审计 `AndroidManifest.xml`：只保留真正用到的权限，删除无用声明；确认运行时
+- [x] 审计 `AndroidManifest.xml`：只保留真正用到的权限，删除无用声明；确认运行时
       权限（通知、存储/文件选择、生物识别等）都有明确申请时机和被拒绝后的降级路径。
-- [ ] 确认发布配置：`applicationId`、版本号与 `pubspec.yaml` 一致、`minSdk`/
+- [x] 确认发布配置：`applicationId`、版本号与 `pubspec.yaml` 一致、`minSdk`/
       `targetSdk`、R8/混淆规则不破坏反射依赖、release 签名从环境读取而不入库。
-- [ ] 内置更新检查：读取 GitHub 最新 release 的 tag 与说明，与当前版本比较，有新版
+- [x] 内置更新检查：读取 GitHub 最新 release 的 tag 与说明，与当前版本比较，有新版
       时提示并用外部浏览器跳到该 release 页面由用户手动下载。应用自身不下载、不安
       装 APK，不申请 `REQUEST_INSTALL_PACKAGES`。
-- [ ] 更新检查要处理无网络、限流、无 release、tag 格式异常，失败只提示不阻塞使用；
+- [x] 更新检查要处理无网络、限流、无 release、tag 格式异常，失败只提示不阻塞使用；
       支持手动检查入口，不做静默后台轮询。
-- [ ] GitHub Action：push tag（`v*`）触发，构建 release APK，按 ABI 分包
+- [x] GitHub Action：push tag（`v*`）触发，构建 release APK，按 ABI 分包
       （arm64-v8a、armeabi-v7a、x86_64），产物带版本名，创建 GitHub Release 并上传。
-- [ ] Action 不得把签名密钥或口令写进仓库或日志，全部走 repository secrets。
+- [x] Action 不得把签名密钥或口令写进仓库或日志，全部走 repository secrets。
 - [ ] 打第一个 tag 触发发布，等用户确认打包与 release 产物无误后收尾。
+
+实现位置：
+
+- 权限与发布配置：`android/app/src/main/AndroidManifest.xml`、
+  `android/app/build.gradle.kts`、`android/app/proguard-rules.pro`。
+- 更新检查：`lib/features/update/`（domain/data/application/presentation），
+  设置页入口在 `lib/features/settings/about_section.dart`。
+- 发布流水线：`.github/workflows/release.yml`。
 
 ## 13. 新会话的直接开工顺序
 
 1. 阅读 `AGENTS.md`、`functional-spec.md`、本文件和 `docs/handoff.md`。
-2. 从第 10 节开始：全局工作规范的单设备覆盖与合并优先级，以及 `local_auth`。
+2. 第 12 节的权限审计、发布配置、内置更新检查和 release workflow 已完成，首个
+   `v1.0.0` tag 已推送；仍未完成的是第 10 节（单设备工作规范、`local_auth`）和
+   第 11 节（生命周期检查、第三方许可证页面、release 日志复查）。
 3. 生物识别必须处理无硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
-4. 完成 format/analyze 后交给用户在 Android 真机验证，再进入第 11、12 节收尾。
+4. 完成 format/analyze 后交给用户在 Android 真机验证。后续版本发布只需要改
+   `pubspec.yaml` 的 `version:` 并推一个同名 `v*` tag，workflow 会校验两者一致。
 
 每个纵向切片结束时，更新本文件的勾选状态，并在交付中列出：已替换的 mock、
 仍存在的 mock、静态检查结果，以及需要用户在 Android 上手测的确切流程。

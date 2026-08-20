@@ -16,9 +16,22 @@ Shelly Android 是一个 Android-first 的 Flutter SSH 客户端，目标是提�
 - xterm 远程 shell、ANSI/UTF-8、中文输入、组合输入和全屏程序
 - PTY 尺寸同步、旋转 resize、复制/全选/粘贴和 Android IME
 - Termux 风格扩展按键、Ctrl/Alt 单次与锁定、导航键长按重复
+- 便签与命令历史持久化、搜索、置顶和互转
+- SFTP 文件浏览、属性/预览/重命名/删除，以及上传下载队列（暂停、恢复、重试）
+- 按需服务器状态快照（系统、CPU、内存、磁盘、负载、uptime）
+- Agent Provider（Messages / Responses 流式协议）、只读工具集，以及唯一写工具
+  `request_commands` 的逐条命令审批
+- 手动检查 GitHub 最新 release 并跳转浏览器下载
 
-便签/历史持久化、SFTP、服务器状态、Provider/Agent 工具循环、生物识别和后台
-生命周期仍按实现清单逐步开发。
+生物识别锁、单设备工作规范和后台生命周期重连仍按实现清单逐步开发，详见
+`docs/implementation-todo.md` 第 10、11 节。
+
+## 安装
+
+正式版本由 GitHub Action 在推送 `v*` tag 时构建，按 ABI 分包上传到
+[Releases](https://github.com/WEP-56/shelly-Android/releases)。请下载与设备
+架构匹配的 APK（多数设备是 `arm64-v8a`）并手动安装；应用内的“检查更新”只会
+打开 release 页面，不会自行下载或安装 APK。
 
 ## 开发环境
 
@@ -46,12 +59,19 @@ lib/
   core/ssh/            SSH 连接工厂、host key 和会话控制器
   core/terminal/       xterm 适配器和扩展按键定义
   features/hosts/      主机 CRUD
-  features/settings/   设置和已知主机管理
-  features/terminal/   终端、扩展按键、Agent 和抽屉
+  features/settings/   设置、已知主机和关于/更新入口
+  features/terminal/   终端、扩展按键和抽屉
+  features/snippets/   便签
+  features/history/    命令历史
+  features/sftp/       SFTP 浏览与传输
+  features/agent/      Provider、工具循环与审批
+  features/update/     GitHub release 检查
 docs/
   functional-spec.md       产品行为规范
   implementation-todo.md   实现清单
   handoff.md               新会话接手说明
+.github/workflows/
+  release.yml              push v* tag 时构建并发布 APK
 ```
 
 Widget 不得直接持有 `SSHClient`、shell 或 SFTP 句柄；连接生命周期由
@@ -79,8 +99,24 @@ xterm:
 - Agent 未来的远程写操作必须先展示完整命令并等待用户批准。
 - 终端快捷键必须通过 xterm key/input API 发送控制序列，不能修改隐藏文本框。
 
+## 发布
+
+- `pubspec.yaml` 的 `version:` 是唯一版本来源；Gradle 会把它注入
+  `versionName`/`versionCode`。
+- 发布新版本：改 `pubspec.yaml` 的 `version:`，提交后推一个同名 `v*` tag
+  （例如 `1.0.1+2` 对应 `v1.0.1`）。workflow 会校验 tag 与版本名一致，不一致直接
+  失败。
+- release 签名只从 repository secrets 读取（`ANDROID_KEYSTORE_BASE64`、
+  `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`），
+  密钥和口令不入库、不进日志。未配置时构建仍会成功，但产物是 debug 签名，
+  release 说明里会明确标注。
+- 本地构建 release 包时，签名信息从环境变量 `SHELLY_KEYSTORE_PATH`、
+  `SHELLY_KEYSTORE_PASSWORD`、`SHELLY_KEY_ALIAS`、`SHELLY_KEY_PASSWORD` 读取，
+  或放在被 gitignore 的 `android/key.properties`。
+
 ## 继续开发
 
 新会话请先阅读 `AGENTS.md`、`docs/functional-spec.md`、`docs/handoff.md` 和
-`docs/implementation-todo.md`。默认从 TODO 第 6 节的便签与历史持久化开始，
-保持现有视觉参数、SSH 生命周期和终端输入边界不变。
+`docs/implementation-todo.md`。TODO 第 2 至第 9 节和第 12 节已完成，默认从第 10 节
+（单设备工作规范、`local_auth` 生物锁、后台重新锁定）开始，保持现有视觉参数、
+SSH 生命周期和终端输入边界不变。

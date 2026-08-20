@@ -45,6 +45,8 @@ dependencies:
       ref: 3c53a85131794854f2d3fb5d19a700bbb337e173
   file_picker: ^11.0.3
   http: ^1.6.0
+  url_launcher: ^6.3.2
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:

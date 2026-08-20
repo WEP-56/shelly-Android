@@ -1,4 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The only permission this app needs: outbound SSH/SFTP sockets, provider
+         requests and the GitHub release check. INTERNET is a normal (install
+         time) permission, so there is no runtime request for it.
+
+         Deliberately absent:
+         - REQUEST_INSTALL_PACKAGES: update checking only opens the release page
+           in a browser; the app never downloads or installs an APK.
+         - READ/WRITE_EXTERNAL_STORAGE and MANAGE_EXTERNAL_STORAGE: uploads and
+           downloads go through the Android document picker (SAF), which grants
+           access per user selection.
+         - POST_NOTIFICATIONS: the app posts no notifications and runs no
+           foreground service.
+         - USE_BIOMETRIC: no biometric lock is implemented yet. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Shelly"
         android:name="${applicationName}"
@@ -40,6 +54,12 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Lets url_launcher resolve a browser for the GitHub release page on
+             API 30+, where package visibility is filtered by default. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

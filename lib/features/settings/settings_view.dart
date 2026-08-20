@@ -13,6 +13,7 @@ import '../../ui/settings_tiles.dart';
 import '../agent/data/agent_session_repository.dart';
 import '../agent/data/agent_settings_repository.dart';
 import '../agent/presentation/agent_settings_section.dart';
+import 'about_section.dart';
 
 class SettingsView extends StatelessWidget {
   const SettingsView({
@@ -212,21 +213,7 @@ class SettingsView extends StatelessWidget {
             ),
           ],
         ),
-        const SettingsSection(
-          label: '关于',
-          children: [
-            SettingsRow(
-              icon: Icons.info_outline_rounded,
-              label: '版本',
-              hint: 'Shelly 1.0.0',
-            ),
-            SettingsRow(
-              icon: Icons.balance_rounded,
-              label: '开源许可',
-              hint: 'MIT',
-            ),
-          ],
-        ),
+        const AboutSection(),
       ],
     );
   }
