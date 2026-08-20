@@ -133,10 +133,10 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ## 8. 服务器状态
 
-- [ ] 建立按需 `ServerStatusService`，不做后台持续轮询。
-- [ ] 针对 Linux 读取系统、CPU、内存、磁盘、负载和 uptime。
-- [ ] 不同发行版字段缺失时逐项显示不可用，不能把整张状态卡判为成功或失败。
-- [ ] 状态请求支持取消、超时和重试，关闭弹窗不影响终端 shell。
+- [x] 建立按需 `ServerStatusService`，不做后台持续轮询。
+- [x] 针对 Linux 读取系统、CPU、内存、磁盘、负载和 uptime。
+- [x] 不同发行版字段缺失时逐项显示不可用，不能把整张状态卡判为成功或失败。
+- [x] 状态请求支持取消、超时和重试，关闭弹窗不影响终端 shell。
 
 ## 9. Agent Provider 与工具循环
 

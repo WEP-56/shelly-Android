@@ -13,6 +13,7 @@ import '../../core/ssh/ssh_session_controller.dart';
 import '../../core/terminal/terminal_input.dart';
 import '../../core/terminal/terminal_session_adapter.dart';
 import '../history/history_repository.dart';
+import '../server_status/server_status_dialog.dart';
 import '../snippets/snippet_repository.dart';
 import '../sftp/sftp_transfer_controller.dart';
 import '../sftp/sftp_drawer.dart';
@@ -577,7 +578,16 @@ class _TerminalScreenState extends State<TerminalScreen>
     final colors = context.shelly;
     final items = [
       (Icons.smart_toy_outlined, 'Agent', _agentOpen, _toggleAgent),
-      (Icons.speed_rounded, '状态', false, () => _showStatus(context)),
+      (
+        Icons.speed_rounded,
+        '状态',
+        false,
+        () => showServerStatusDialog(
+          context,
+          host: widget.server,
+          session: _session,
+        ),
+      ),
       (
         Icons.notes_rounded,
         '便签',
@@ -857,138 +867,5 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
-}
-
-Future<void> _showStatus(BuildContext context) {
-  return showDialog<void>(
-    context: context,
-    builder: (context) => const _StatusDialog(),
-  );
-}
-
-class _StatusDialog extends StatelessWidget {
-  const _StatusDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      contentPadding: const EdgeInsets.all(20),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: context.shelly.surface3,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.speed_rounded,
-                  size: 20,
-                  color: context.shelly.onSurface2,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'prod-web-01',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      '45.77.89.12:22',
-                      style: TextStyle(fontFamily: 'monospace', fontSize: 10.5),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          const _Stat(label: 'CPU', value: 0.46),
-          const _Stat(label: '内存', value: 0.68),
-          const _Stat(label: '磁盘', value: 0.45),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '运行 12 天 4 小时',
-                style: TextStyle(
-                  color: context.shelly.onSurface3,
-                  fontSize: 10.5,
-                ),
-              ),
-              Text(
-                '延迟 23 ms',
-                style: TextStyle(
-                  color: context.shelly.onSurface3,
-                  fontFamily: 'monospace',
-                  fontSize: 10.5,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat({required this.label, required this.value});
-
-  final String label;
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: context.shelly.onSurface2,
-                    fontSize: 11.5,
-                  ),
-                ),
-              ),
-              Text(
-                '${(value * 100).round()}%',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-              ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: value,
-              minHeight: 6,
-              backgroundColor: context.shelly.surface3,
-              color: context.shelly.primary,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

@@ -109,7 +109,7 @@ xterm:
 
 ## 当前明确未完成工作
 
-第 7 节 SFTP 文件与传输已完成；下一个切片从 TODO 第 8 节开始：服务器状态。
+第 8 节服务器状态已完成；下一个切片从 TODO 第 9 节开始：Agent Provider 与工具循环。
 
 - `SnippetRepository`、`HistoryRepository` 已接入 SQLite；便签支持搜索、编辑、
   置顶、删除、标签和设备范围，历史支持搜索、置顶、删除、清空和转为便签。
@@ -132,14 +132,22 @@ xterm:
 - Android `FilePicker.saveFile()` 不支持无 bytes 的大文件保存，因此下载改为选择
   目录后由传输 controller 流式写入目标文件；不要恢复 `saveFile(bytes: ...)` 方案。
 
-之后依次是第 8 节服务器状态、第 9 节 Agent Provider
-和受审批 write tool、第 10 节规范/搜索/生物锁，以及第 11 节生命周期和发布前
-清理。
+### 服务器状态
+
+- `ServerStatusService` 通过当前 SSH 连接创建独立 exec channel，按需读取一次
+  Linux 状态快照，不写入交互式终端，也不做后台持续轮询。
+- 状态弹窗显示真实主机名、系统、CPU、内存、根磁盘、负载和 uptime；发行版或
+  内核缺少字段时逐项显示“不可用”。
+- 请求有 12 秒整体超时，支持关闭取消、失败重试和手动刷新；关闭状态弹窗只清理
+  独立命令 channel，不影响终端 shell。
+
+之后依次是第 9 节 Agent Provider 和受审批 write tool、第 10 节规范/搜索/生物锁，
+以及第 11 节生命周期和发布前清理。
 
 ## 下一会话建议开工顺序
 
-1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 8 节。
-2. 阅读并实现 TODO 第 8 节服务器状态，继续复用现有会话所有权边界。
+1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 9 节。
+2. 阅读并实现 TODO 第 9 节 Agent Provider 与工具循环，保持 read/write 工具边界。
 3. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
 
 ## 不要破坏的边界
@@ -159,7 +167,6 @@ xterm:
 已完成：
 
 - Agent 回复和 Provider：`lib/features/terminal/agent_panel.dart` 仍是演示流。
-- 状态弹窗：`TerminalScreen` 中的状态卡仍是演示数据。
-- 服务器状态、Agent 工具循环、生物识别和后台生命周期均未完成。
+- Agent 工具循环、生物识别和后台生命周期均未完成。
 
 这些 mock 的清理应随对应纵向切片完成，不要在一次无关改动中顺手重构整个 UI。

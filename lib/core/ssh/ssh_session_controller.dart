@@ -201,6 +201,41 @@ class SshSessionController extends ChangeNotifier {
     return session;
   }
 
+  Future<SshCommandHandle> executeCommand(String command) async {
+    final connection = _connection;
+    final generation = _generation;
+    if (!isConnected || connection == null) {
+      throw SshFailure(
+        stage: SshFailureStage.session,
+        host: _host.host,
+        port: _host.port,
+        message: 'SSH 会话尚未连接。',
+      );
+    }
+    late SshCommandHandle handle;
+    try {
+      handle = await connection.execute(command);
+    } on Object catch (error) {
+      throw SshFailure(
+        stage: SshFailureStage.session,
+        host: _host.host,
+        port: _host.port,
+        message: '无法创建远程命令通道。',
+        cause: error,
+      );
+    }
+    if (generation != _generation || !isConnected || _disposed) {
+      handle.close();
+      throw SshFailure(
+        stage: SshFailureStage.session,
+        host: _host.host,
+        port: _host.port,
+        message: 'SSH 会话已经断开。',
+      );
+    }
+    return handle;
+  }
+
   Future<void> disconnect() async {
     ++_generation;
     _cleanupConnection();

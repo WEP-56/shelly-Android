@@ -60,6 +60,7 @@ class SshConnectionHandle {
   final SSHClient _client;
   final SSHSession _shell;
   bool _closed = false;
+  final Set<SshCommandHandle> _commands = {};
 
   Stream<Uint8List> get stdout => _shell.stdout;
   Stream<Uint8List> get stderr => _shell.stderr;
@@ -73,6 +74,28 @@ class SshConnectionHandle {
       throw StateError('SSH session is closed');
     }
     return SftpSession(client, onClosed: onClosed);
+  }
+
+  Future<SshCommandHandle> execute(
+    String command, {
+    void Function()? onClosed,
+  }) async {
+    if (_closed) throw StateError('SSH session is closed');
+    late SshCommandHandle handle;
+    final session = await _client.execute(command);
+    if (_closed) {
+      session.close();
+      throw StateError('SSH session is closed');
+    }
+    handle = SshCommandHandle(
+      session,
+      onClosed: () {
+        _commands.remove(handle);
+        onClosed?.call();
+      },
+    );
+    _commands.add(handle);
+    return handle;
   }
 
   void write(Uint8List bytes) {
@@ -93,9 +116,51 @@ class SshConnectionHandle {
   void close() {
     if (_closed) return;
     _closed = true;
+    for (final command in List<SshCommandHandle>.of(_commands)) {
+      command.close();
+    }
+    _commands.clear();
     _shell.close();
     _client.close();
     _socket.destroy();
+  }
+}
+
+/// An independently cancellable remote command channel.
+///
+/// Closing this handle only terminates the command channel; the interactive
+/// shell owned by [SshConnectionHandle] remains available.
+class SshCommandHandle {
+  SshCommandHandle(this._session, {void Function()? onClosed})
+    : _onClosed = onClosed {
+    unawaited(
+      _session.done.then(
+        (_) => _markClosed(),
+        onError: (_, _) => _markClosed(),
+      ),
+    );
+  }
+
+  final SSHSession _session;
+  final void Function()? _onClosed;
+  bool _closed = false;
+
+  Stream<Uint8List> get stdout => _session.stdout;
+  Stream<Uint8List> get stderr => _session.stderr;
+  Future<void> get done => _session.done;
+  int? get exitCode => _session.exitCode;
+
+  void _markClosed() {
+    if (_closed) return;
+    _closed = true;
+    _onClosed?.call();
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _session.close();
+    _onClosed?.call();
   }
 }
 
