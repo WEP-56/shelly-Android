@@ -10,11 +10,11 @@
 ## 0. 当前基线
 
 - Flutter 工程仅支持 Android，应用名和启动图标已配置为 Shelly。
-- Server、Settings、Terminal、Agent、状态、便签、历史和文件抽屉均为前端演示。
-- mock 数据集中在 `lib/app/models.dart`、`HomeShell`、`TerminalScreen` 和
-  `terminal_drawers.dart`，没有持久化、SSH、SFTP 或真实 Provider。
-- 终端输出已使用 Android 原生选区菜单；便签和历史的插入、运行、删除交互已
-  接通，但数据在重新打开抽屉后会重置。
+- Agent、状态仍有演示实现；主机、SSH、终端、便签、历史和 SFTP 文件抽屉已接入
+  真实路径。
+- 演示数据主要剩余在 `agent_panel.dart` 和 `TerminalScreen` 的状态卡。
+- 终端输出、便签/历史持久化、SFTP 浏览和传输均已有独立 controller/service
+  边界；文件抽屉关闭不会销毁终端或取消传输。
 - 每完成一个阶段，只做 `dart format`、`flutter analyze` 和用户明确要求的
   `flutter run`；不要自行运行复杂测试或管理模拟器。
 
@@ -113,23 +113,23 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ## 6. 便签与历史持久化
 
-- [ ] `SnippetRepository` 实现列表、搜索、新增、编辑、置顶、删除和设备范围。
-- [ ] 便签“插入”只写终端输入；“运行”先确认，再发送完整命令。
-- [ ] `HistoryRepository` 在用户实际发送命令时记录 host、时间和命令文本。
-- [ ] 能可靠获取退出码时再写 exit_code；拿不到时保存 null，不能伪造成功。
-- [ ] 输出摘要设置单条长度上限和全局清理策略，避免数据库无限增长。
-- [ ] 历史支持按当前设备和关键词筛选、单条删除、清空、转为便签。
-- [ ] 抽屉插入/运行后关闭并回到终端；删除后留在抽屉并即时更新列表。
+- [x] `SnippetRepository` 实现列表、搜索、新增、编辑、置顶、删除和设备范围。
+- [x] 便签“插入”只写终端输入；“运行”先确认，再发送完整命令。
+- [x] `HistoryRepository` 在用户实际发送命令时记录 host、时间和命令文本。
+- [x] 能可靠获取退出码时再写 exit_code；拿不到时保存 null，不能伪造成功。
+- [x] 输出摘要设置单条长度上限和全局清理策略，避免数据库无限增长。
+- [x] 历史支持按当前设备和关键词筛选、单条删除、清空、转为便签。
+- [x] 抽屉插入/运行后关闭并回到终端；删除后留在抽屉并即时更新列表。
 
 ## 7. SFTP 文件与传输
 
-- [ ] 从 `SshSessionController` 获取共享 SSHClient，按需创建独立 SFTP 句柄。
-- [ ] 文件抽屉实现加载、空目录、失败重试、返回上级、刷新和分页/数量说明。
-- [ ] 支持目录进入、文件属性、文本预览、重命名、创建目录和删除确认。
-- [ ] 上传使用 Android SAF 选文件；下载使用用户可见目录或创建文档流程。
-- [ ] 传输任务有 queued、running、paused、completed、failed、cancelled 状态。
-- [ ] 展示字节进度、速度、取消和重试；关闭抽屉不取消后台中的当前连接任务。
-- [ ] 同名文件明确询问覆盖、跳过或重命名，不静默覆盖。
+- [x] 从 `SshSessionController` 获取共享 SSHClient，按需创建独立 SFTP 句柄。
+- [x] 文件抽屉实现加载、空目录、失败重试、返回上级、刷新和已加载数量说明。
+- [x] 支持目录进入、文件属性、文本预览、重命名、创建目录和删除确认。
+- [x] 上传使用 Android SAF 选文件；下载使用用户可见目录或创建文档流程。
+- [x] 传输任务有 queued、running、paused、completed、failed、cancelled 状态。
+- [x] 展示字节进度、速度、取消和重试；关闭抽屉不取消后台中的当前连接任务。
+- [x] 同名文件明确询问覆盖、跳过或重命名，不静默覆盖。
 
 ## 8. 服务器状态
 
@@ -188,11 +188,10 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ## 12. 新会话的直接开工顺序
 
-1. 阅读 `AGENTS.md`、`functional-spec.md` 和本文件。
-2. 只实现第 2、3 节：SQLite/安全存储基础和真实主机 CRUD。
-3. 用 repository/controller 替换 `HomeShell` 中的内存列表，不动已确认的视觉参数。
-4. 完成 format/analyze 后，把主机新增、编辑、重启恢复和删除流程 run 到用户模拟器。
-5. 用户确认后再进入第 4 节 SSH 连接，避免一次改动跨越持久化、网络和终端三层。
+1. 阅读 `AGENTS.md`、`functional-spec.md`、本文件和 `docs/handoff.md`。
+2. 从第 8 节服务器状态开始，复用 `SshSessionController` 的会话所有权边界。
+3. 保持状态请求按需、可取消、有超时和重试，不做后台持续轮询。
+4. 完成 format/analyze 后交给用户在 Android 真机验证，再进入第 9 节 Agent。
 
 每个纵向切片结束时，更新本文件的勾选状态，并在交付中列出：已替换的 mock、
 仍存在的 mock、静态检查结果，以及需要用户在 Android 上手测的确切流程。

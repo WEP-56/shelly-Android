@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../../app/models.dart';
+import '../../features/sftp/sftp_session.dart';
 import 'ssh_connection_factory.dart';
 import 'ssh_models.dart';
 
@@ -33,6 +34,7 @@ class SshSessionController extends ChangeNotifier {
   StreamSubscription<String>? _stderrSubscription;
   Future<void>? _stdoutDone;
   Future<void>? _stderrDone;
+  final Set<SftpSession> _sftpSessions = {};
   int _terminalWidth = 80;
   int _terminalHeight = 24;
   int _terminalPixelWidth = 0;
@@ -172,6 +174,33 @@ class SshSessionController extends ChangeNotifier {
     }
   }
 
+  Future<SftpSession> openSftpSession() async {
+    final connection = _connection;
+    final generation = _generation;
+    if (!isConnected || connection == null) {
+      throw SftpFailure('SSH 会话尚未连接。', path: '.');
+    }
+    late SftpSession session;
+    try {
+      session = await connection.openSftp(
+        onClosed: () => _sftpSessions.remove(session),
+      );
+    } on Object catch (error) {
+      if (error is SftpFailure) rethrow;
+      throw SftpFailure(
+        '无法创建 SFTP 会话，请确认服务器已启用 SFTP。',
+        path: '.',
+        cause: error,
+      );
+    }
+    if (generation != _generation || !isConnected || _disposed) {
+      await session.close();
+      throw SftpFailure('SSH 会话已经断开。', path: '.');
+    }
+    _sftpSessions.add(session);
+    return session;
+  }
+
   Future<void> disconnect() async {
     ++_generation;
     _cleanupConnection();
@@ -249,6 +278,11 @@ class SshSessionController extends ChangeNotifier {
   }
 
   void _cleanupConnection() {
+    final sftpSessions = List<SftpSession>.of(_sftpSessions);
+    _sftpSessions.clear();
+    for (final session in sftpSessions) {
+      unawaited(session.close());
+    }
     unawaited(_stdoutSubscription?.cancel());
     unawaited(_stderrSubscription?.cancel());
     _stdoutSubscription = null;

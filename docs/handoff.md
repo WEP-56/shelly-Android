@@ -10,7 +10,7 @@ xterm 终端切片，反馈为“无任何问题”。本项目没有可用的 G
 
 1. `AGENTS.md`：产品边界、安全规则、验证限制和 `example/` 使用规则。
 2. `docs/functional-spec.md`：产品行为和交互约束。
-3. `docs/implementation-todo.md`：纵向切片清单；第 2、3、4、5 节已完成。
+3. `docs/implementation-todo.md`：纵向切片清单；第 2 至第 7 节已完成。
 4. `example/README.md`：ServerBox 参考快照的来源、许可证和建议阅读顺序。
 
 不要把 `example/` 当作项目模板、path dependency 或可运行工程。它是只读参考，
@@ -95,36 +95,52 @@ xterm:
 - 横竖屏旋转和 PTY resize。
 - Agent 聚焦时终端快捷键隔离。
 
+用户已完成 SFTP 真机验证；当前确认无问题：
+
+- 真实远程目录加载、进入目录、返回上级、刷新、搜索和排序。
+- 文件属性、文本预览、新建目录、重命名、复制路径和删除确认。
+- 上传队列、下载队列、暂停、恢复、取消、重试、进度和速度显示。
+- 下载使用 Android 文件选择器选择保存目录；覆盖冲突支持覆盖、重命名和跳过。
+- 修复文件抽屉小屏底部 overflow；操作菜单可滚动，抽屉宽度和标题布局响应式调整。
+- 关闭文件抽屉不会取消传输；传输失败或取消不会留下半文件。
+
 按照 `AGENTS.md`，代理没有自行运行 `flutter test`、Gradle/release build 或管理
 模拟器；后续会话也不要默认扩大验证范围。
 
 ## 当前明确未完成工作
 
-下一个切片应从 TODO 第 6 节开始：便签和历史持久化。
+第 7 节 SFTP 文件与传输已完成；下一个切片从 TODO 第 8 节开始：服务器状态。
 
-- `SnippetRepository`：列表、搜索、新增、编辑、置顶、删除和设备范围。
-- 插入只写终端输入；运行必须先经过确认并发送完整命令。
-- `HistoryRepository`：实际发送命令时记录 host、时间、session 和命令文本。
-- 退出码拿不到时保存 `null`，不能伪造成功。
-- 输出摘要必须有单条上限和清理策略。
-- 抽屉插入/运行后关闭并回到终端；删除即时更新且不意外断开连接。
+- `SnippetRepository`、`HistoryRepository` 已接入 SQLite；便签支持搜索、编辑、
+  置顶、删除、标签和设备范围，历史支持搜索、置顶、删除、清空和转为便签。
+- 便签插入只写终端输入；便签/历史运行均先确认，再发送完整命令。
+- 成功发送 Enter 后记录 host、时间、session 和命令文本；无法可靠取得退出码时保存
+  `null`。历史有单条输出摘要上限和最多 2000 条非秘密记录的清理策略。
+- 使用控制编辑、Tab 补全等无法可靠还原最终命令行的输入会跳过自动历史记录，避免
+  把错误文本写入历史。
 
-之后依次是第 7 节 SFTP 文件与传输、第 8 节服务器状态、第 9 节 Agent Provider
+### SFTP 文件与传输
+
+- `SshSessionController` 统一创建和清理独立 SFTP channel；文件抽屉和传输任务不
+  直接持有 raw `SSHClient`。
+- 文件抽屉已支持真实目录加载、搜索、排序、进入目录、返回上级、属性、文本预览、
+  新建目录、重命名、复制路径和删除确认。
+- 上传使用 Android 文件选择器；下载使用用户可见保存位置。覆盖冲突提供覆盖、
+  重命名和跳过选择。
+- 传输 controller 支持队列、并发上限 2、暂停、恢复、取消、重试、进度和速度；传输
+  使用临时文件，完成后才替换目标。关闭文件抽屉不会取消传输。
+- Android `FilePicker.saveFile()` 不支持无 bytes 的大文件保存，因此下载改为选择
+  目录后由传输 controller 流式写入目标文件；不要恢复 `saveFile(bytes: ...)` 方案。
+
+之后依次是第 8 节服务器状态、第 9 节 Agent Provider
 和受审批 write tool、第 10 节规范/搜索/生物锁，以及第 11 节生命周期和发布前
 清理。
 
 ## 下一会话建议开工顺序
 
-1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 6 节。
-2. 检查现有 `terminal_drawers.dart` 的 mock 数据入口，先定义强类型
-   `SnippetRepository` / `HistoryRepository` 边界。
-3. 复用 `lib/core/storage/` 的 SQLite 迁移和 `AppSettings` 持久化模式；不要把
-   命令历史或便签继续放在 Widget 状态里。
-4. 将“插入”和“运行”分别接到 `TerminalSessionAdapter.insertText` 与
-   `runCommand`，不要恢复隐藏输入框或字符串拼接控制键。
-5. 记录实际发送的终端输入时，注意 xterm 会发送控制序列；历史应记录可识别的
-   用户命令文本，不能把 ANSI 输出或秘密混入历史。
-6. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
+1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 8 节。
+2. 阅读并实现 TODO 第 8 节服务器状态，继续复用现有会话所有权边界。
+3. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
 
 ## 不要破坏的边界
 
@@ -144,7 +160,6 @@ xterm:
 
 - Agent 回复和 Provider：`lib/features/terminal/agent_panel.dart` 仍是演示流。
 - 状态弹窗：`TerminalScreen` 中的状态卡仍是演示数据。
-- 便签和历史抽屉：`terminal_drawers.dart` 中的列表尚未接 repository。
-- SFTP 文件抽屉、服务器状态、Agent 工具循环、生物识别和后台生命周期均未完成。
+- 服务器状态、Agent 工具循环、生物识别和后台生命周期均未完成。
 
 这些 mock 的清理应随对应纵向切片完成，不要在一次无关改动中顺手重构整个 UI。

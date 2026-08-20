@@ -63,6 +63,8 @@ class _HomeShellState extends State<HomeShell> {
             fontSize: widget.settings.fontSize,
             cursorBlink: widget.settings.cursorBlink,
             extraKeys: widget.settings.extraKeys,
+            snippets: widget.services.snippets,
+            history: widget.services.history,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {

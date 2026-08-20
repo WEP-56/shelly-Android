@@ -12,6 +12,7 @@ class TerminalSessionAdapter extends ChangeNotifier {
   TerminalSessionAdapter({
     required SshSessionController session,
     this.onInputError,
+    this.onCommandSubmitted,
   }) : _session = session {
     terminal = Terminal(
       maxLines: 5000,
@@ -27,6 +28,7 @@ class TerminalSessionAdapter extends ChangeNotifier {
 
   final SshSessionController _session;
   final void Function(Object error)? onInputError;
+  final void Function(String command)? onCommandSubmitted;
   final StringBuffer _pendingOutput = StringBuffer();
 
   late final Terminal terminal;
@@ -36,6 +38,10 @@ class TerminalSessionAdapter extends ChangeNotifier {
   TerminalModifierState _altState = TerminalModifierState.inactive;
   bool _bypassModifiers = false;
   bool _disposed = false;
+  String _inputLine = '';
+  bool _inputLineReliable = true;
+  bool _trackingDisabled = false;
+  bool _sendFailed = false;
 
   TerminalModifierState get controlState => _controlState;
   TerminalModifierState get altState => _altState;
@@ -83,13 +89,18 @@ class TerminalSessionAdapter extends ChangeNotifier {
   }
 
   void runCommand(String command) {
-    terminal.paste(command);
-    _bypassModifiers = true;
+    if (command.trim().isEmpty) return;
+    _trackingDisabled = true;
+    _sendFailed = false;
     try {
+      terminal.paste(command);
+      _bypassModifiers = true;
       terminal.keyInput(TerminalKey.enter);
     } finally {
       _bypassModifiers = false;
+      _trackingDisabled = false;
     }
+    if (!_sendFailed) onCommandSubmitted?.call(command.trim());
   }
 
   void clear() {
@@ -144,8 +155,40 @@ class TerminalSessionAdapter extends ChangeNotifier {
   void _sendOutput(String data) {
     try {
       _session.sendText(data);
+      if (!_trackingDisabled) _trackSubmittedCommands(data);
     } on Object catch (error) {
+      _sendFailed = true;
       onInputError?.call(error);
+    }
+  }
+
+  void _trackSubmittedCommands(String data) {
+    if (onCommandSubmitted == null) return;
+    for (var index = 0; index < data.length; index++) {
+      final code = data.codeUnitAt(index);
+      if (code == 13 || code == 10) {
+        final command = _inputLine.trim();
+        _inputLine = '';
+        if (command.isNotEmpty && _inputLineReliable) {
+          onCommandSubmitted!(command);
+        }
+        _inputLineReliable = true;
+      } else if (code == 8 || code == 127) {
+        if (_inputLine.isNotEmpty) {
+          _inputLine = _inputLine.substring(0, _inputLine.length - 1);
+        }
+      } else if (code >= 32 && code != 127) {
+        _inputLine += String.fromCharCode(code);
+      } else {
+        if (code == 3) {
+          _inputLine = '';
+          _inputLineReliable = true;
+        } else if (code == 21) {
+          _inputLine = '';
+        } else {
+          _inputLineReliable = false;
+        }
+      }
     }
   }
 

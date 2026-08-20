@@ -1,6 +1,8 @@
 import '../ssh/known_host_repository.dart';
 import '../ssh/ssh_connection_factory.dart';
 import '../../features/hosts/data/host_repository.dart';
+import '../../features/history/history_repository.dart';
+import '../../features/snippets/snippet_repository.dart';
 import 'app_database.dart';
 import 'secure_credential_store.dart';
 import 'settings_repository.dart';
@@ -12,6 +14,8 @@ class AppServices {
     required this.knownHosts,
     required this.settings,
     required this.sshConnections,
+    required this.snippets,
+    required this.history,
   });
 
   final AppDatabase database;
@@ -19,6 +23,8 @@ class AppServices {
   final KnownHostRepository knownHosts;
   final SettingsRepository settings;
   final SshConnectionFactory sshConnections;
+  final SnippetRepository snippets;
+  final HistoryRepository history;
 
   static Future<AppServices> open() async {
     final database = await AppDatabase.open();
@@ -34,6 +40,8 @@ class AppServices {
         hosts: hosts,
         knownHosts: knownHosts,
       ),
+      snippets: SnippetRepository(database),
+      history: HistoryRepository(database),
     );
   }
 

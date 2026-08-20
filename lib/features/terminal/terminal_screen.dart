@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
 import '../../app/models.dart';
@@ -11,6 +12,10 @@ import '../../core/ssh/ssh_models.dart';
 import '../../core/ssh/ssh_session_controller.dart';
 import '../../core/terminal/terminal_input.dart';
 import '../../core/terminal/terminal_session_adapter.dart';
+import '../history/history_repository.dart';
+import '../snippets/snippet_repository.dart';
+import '../sftp/sftp_transfer_controller.dart';
+import '../sftp/sftp_drawer.dart';
 import '../../ui/shelly_icon_button.dart';
 import 'agent_panel.dart';
 import 'extra_keys_bar.dart';
@@ -24,6 +29,8 @@ class TerminalScreen extends StatefulWidget {
     required this.fontSize,
     required this.cursorBlink,
     required this.extraKeys,
+    required this.snippets,
+    required this.history,
     super.key,
   });
 
@@ -33,6 +40,8 @@ class TerminalScreen extends StatefulWidget {
   final double fontSize;
   final bool cursorBlink;
   final List<TerminalExtraKey> extraKeys;
+  final SnippetRepository snippets;
+  final HistoryRepository history;
 
   @override
   State<TerminalScreen> createState() => _TerminalScreenState();
@@ -44,9 +53,11 @@ class _TerminalScreenState extends State<TerminalScreen>
   late final TerminalController _terminalController;
   late final SshSessionController _session;
   late final TerminalSessionAdapter _terminal;
+  late final SftpTransferController _transfers;
   bool _menuOpen = false;
   bool _agentOpen = false;
   bool _agentInputFocused = false;
+  final String _historySessionId = const Uuid().v4();
 
   @override
   void initState() {
@@ -61,7 +72,9 @@ class _TerminalScreenState extends State<TerminalScreen>
     _terminal = TerminalSessionAdapter(
       session: _session,
       onInputError: _handleTerminalInputError,
+      onCommandSubmitted: _recordCommand,
     )..addListener(_onTerminalChanged);
+    _transfers = SftpTransferController(sshSession: _session);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_session.connect());
@@ -73,6 +86,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     _terminal
       ..removeListener(_onTerminalChanged)
       ..dispose();
+    _transfers.dispose();
     _session
       ..removeListener(_onSessionChanged)
       ..dispose();
@@ -233,7 +247,12 @@ class _TerminalScreenState extends State<TerminalScreen>
                 ? null
                 : () {
                     setState(() => _menuOpen = false);
-                    showFilesDrawer(context, widget.server);
+                    showFilesDrawer(
+                      context,
+                      widget.server,
+                      session: _session,
+                      transfers: _transfers,
+                    );
                   },
           ),
           ShellyIconButton(
@@ -566,7 +585,9 @@ class _TerminalScreenState extends State<TerminalScreen>
         () => showSnippetsDrawer(
           context,
           onInsert: _insertCommand,
-          onRun: _runCommand,
+          onRun: _confirmAndRunCommand,
+          repository: widget.snippets,
+          hostId: widget.server.id,
         ),
       ),
       (
@@ -576,7 +597,10 @@ class _TerminalScreenState extends State<TerminalScreen>
         () => showHistoryDrawer(
           context,
           onInsert: _insertCommand,
-          onRun: _runCommand,
+          onRun: _confirmAndRunCommand,
+          repository: widget.history,
+          snippets: widget.snippets,
+          hostId: widget.server.id,
         ),
       ),
     ];
@@ -663,6 +687,46 @@ class _TerminalScreenState extends State<TerminalScreen>
     if (!_session.isConnected) return;
     _terminal.runCommand(command);
     _terminalFocus.requestFocus();
+  }
+
+  void _recordCommand(String command) {
+    unawaited(_persistCommand(command));
+  }
+
+  Future<void> _persistCommand(String command) async {
+    try {
+      await widget.history.record(
+        hostId: widget.server.id,
+        sessionId: _historySessionId,
+        command: command,
+      );
+    } on HistoryRepositoryException catch (error) {
+      if (mounted) _message(error.message);
+    }
+  }
+
+  Future<void> _confirmAndRunCommand(String command) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('运行命令？'),
+        content: SelectableText(
+          command,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('运行'),
+          ),
+        ],
+      ),
+    );
+    if (approved == true && mounted) _runCommand(command);
   }
 
   Future<void> _requestExit() async {

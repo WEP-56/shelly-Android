@@ -7,6 +7,7 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../../app/models.dart';
 import '../../features/hosts/data/host_repository.dart';
+import '../../features/sftp/sftp_session.dart';
 import 'known_host_repository.dart';
 import 'ssh_models.dart';
 
@@ -63,6 +64,16 @@ class SshConnectionHandle {
   Stream<Uint8List> get stdout => _shell.stdout;
   Stream<Uint8List> get stderr => _shell.stderr;
   Future<void> get done => _client.done;
+
+  Future<SftpSession> openSftp({void Function()? onClosed}) async {
+    if (_closed) throw StateError('SSH session is closed');
+    final client = await _client.sftp();
+    if (_closed) {
+      await client.close();
+      throw StateError('SSH session is closed');
+    }
+    return SftpSession(client, onClosed: onClosed);
+  }
 
   void write(Uint8List bytes) {
     if (_closed) throw StateError('SSH session is closed');
