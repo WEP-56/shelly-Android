@@ -349,7 +349,10 @@ UI 接入：
 ### 用户仍需自己做的事
 
 1. 在仓库 Settings → Secrets and variables → Actions 配置上面四个 secret，否则
-   产物是 debug 签名。配置后重新打一个 tag 即可换成正式签名。
+   产物是 debug 签名。配置后重新打一个 tag 即可换成正式签名。填写说明和生成
+   base64 的命令在 `android/github-secrets.txt`；本机构建的签名配置在
+   `android/key.properties`。这两个文件和 `*.jks`、`*.keystore`、
+   `keystore-base64.txt` 都被 `.gitignore` 忽略，不要改成被跟踪。
 2. 监控 Action 运行结果，安装对应 ABI 的 APK 做真机验证。
 3. release 包是第一次开启 R8/资源压缩的构建，除了更新检查，最好顺带回归一次
    SSH 连接、SFTP 上传下载和 Agent 请求，确认混淆没有影响插件。

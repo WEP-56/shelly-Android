@@ -47,6 +47,8 @@ android/captures/
 *.jks
 *.keystore
 key.properties
+github-secrets.txt
+keystore-base64.txt
 local.properties
 *.pem
 *.p12
