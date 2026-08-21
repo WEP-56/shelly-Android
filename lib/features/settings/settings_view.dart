@@ -13,6 +13,8 @@ import '../../ui/settings_tiles.dart';
 import '../agent/data/agent_session_repository.dart';
 import '../agent/data/agent_settings_repository.dart';
 import '../agent/presentation/agent_settings_section.dart';
+import '../security/application/app_lock_controller.dart';
+import '../security/presentation/app_lock_sheet.dart';
 import 'about_section.dart';
 
 class SettingsView extends StatelessWidget {
@@ -21,6 +23,7 @@ class SettingsView extends StatelessWidget {
     required this.knownHosts,
     required this.agentSettings,
     required this.agentSessions,
+    required this.appLock,
     required this.hostNames,
     required this.themePreference,
     required this.onSettingsChanged,
@@ -32,6 +35,7 @@ class SettingsView extends StatelessWidget {
   final KnownHostRepository knownHosts;
   final AgentSettingsRepository agentSettings;
   final AgentSessionRepository agentSessions;
+  final AppLockController appLock;
 
   /// Host id → display name, so the agent session list can group by device.
   final Map<String, String> hostNames;
@@ -151,6 +155,24 @@ class SettingsView extends StatelessWidget {
               (value) =>
                   onSettingsChanged(settings.copyWith(compression: value)),
             ),
+            _toggle(
+              context,
+              Icons.screen_lock_portrait_rounded,
+              '终端保持屏幕常亮',
+              '打开终端时不息屏，避免心跳停摆被服务器断开',
+              settings.terminalWakeLock,
+              (value) =>
+                  onSettingsChanged(settings.copyWith(terminalWakeLock: value)),
+            ),
+            _toggle(
+              context,
+              Icons.brightness_high_rounded,
+              '全局常亮',
+              '应用在前台时始终不息屏，更耗电',
+              settings.globalWakeLock,
+              (value) =>
+                  onSettingsChanged(settings.copyWith(globalWakeLock: value)),
+            ),
             SettingsRow(
               icon: Icons.key_rounded,
               label: 'SSH 密钥',
@@ -177,17 +199,22 @@ class SettingsView extends StatelessWidget {
           settings: agentSettings,
           sessions: agentSessions,
           hostNames: hostNames,
+          appLock: appLock,
         ),
         SettingsSection(
           label: '安全',
           children: [
-            _toggle(
-              context,
-              Icons.security_rounded,
-              '生物识别锁',
-              '打开应用时验证',
-              settings.biometric,
-              (value) => onSettingsChanged(settings.copyWith(biometric: value)),
+            SettingsRow(
+              icon: Icons.lock_outline_rounded,
+              label: '应用锁',
+              hint: describeAppLock(settings.lock),
+              onTap: () => showAppLockSheet(
+                context,
+                controller: appLock,
+                lock: settings.lock,
+                onChanged: (lock) =>
+                    onSettingsChanged(settings.copyWith(lock: lock)),
+              ),
             ),
             SettingsRow(
               icon: Icons.key_rounded,

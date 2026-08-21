@@ -41,6 +41,7 @@ migrate_working_dir/
 android/local.properties
 android/.gradle/
 android/.idea/
+android/.kotlin/
 android/captures/
 
 # Signing material and local environment files

@@ -66,6 +66,18 @@ class SshConnectionHandle {
   Stream<Uint8List> get stderr => _shell.stderr;
   Future<void> get done => _client.done;
 
+  /// True once this handle was closed locally, or the transport went away.
+  bool get isClosed => _closed || _client.isClosed;
+
+  /// Sends one `keepalive@openssh.com` global request and waits for the reply.
+  ///
+  /// dartssh2 does not time this out, so callers must apply their own — see
+  /// `SshHealthMonitor`.
+  Future<void> ping() {
+    if (_closed) throw StateError('SSH session is closed');
+    return _client.ping();
+  }
+
   Future<SftpSession> openSftp({void Function()? onClosed}) async {
     if (_closed) throw StateError('SSH session is closed');
     final client = await _client.sftp();
@@ -184,7 +196,6 @@ class SshConnectionFactory {
     required HostTrustPrompt promptForHostTrust,
     required void Function(SshConnectionState state) onStateChanged,
     required SshCancellationToken cancellationToken,
-    required bool keepAlive,
     required SshTerminalSize terminalSize,
   }) async {
     SSHSocket? socket;
@@ -283,7 +294,10 @@ class SshConnectionFactory {
           authenticated = true;
           phase = _ConnectPhase.shell;
         },
-        keepAliveInterval: keepAlive ? const Duration(seconds: 15) : null,
+        // No `keepAliveInterval`: dartssh2's SSHKeepAlive only produces traffic
+        // and can never report a dead link (it swallows every exception and
+        // stops pinging after the first unanswered request). The heartbeat and
+        // the liveness detection both live in `SshHealthMonitor` instead.
         handshakeTimeout: _handshakeTimeout,
         authTimeout: _authenticationTimeout,
       );

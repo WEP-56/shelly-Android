@@ -1,7 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The only permission this app needs: outbound SSH/SFTP sockets, provider
-         requests and the GitHub release check. INTERNET is a normal (install
-         time) permission, so there is no runtime request for it.
+    <!-- INTERNET covers outbound SSH/SFTP sockets, provider requests and the
+         GitHub release check. USE_BIOMETRIC backs the optional app lock. Both
+         are normal (install time) permissions, so neither has a runtime
+         request; the lock degrades through AppLockAuthenticator when the device
+         has no usable biometric or device credential.
 
          Deliberately absent:
          - REQUEST_INSTALL_PACKAGES: update checking only opens the release page
@@ -11,8 +13,10 @@
            access per user selection.
          - POST_NOTIFICATIONS: the app posts no notifications and runs no
            foreground service.
-         - USE_BIOMETRIC: no biometric lock is implemented yet. -->
+         - USE_FINGERPRINT: superseded by USE_BIOMETRIC on API 28+, and the app
+           lock also accepts the device PIN/pattern/password. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <application
         android:label="Shelly"
         android:name="${applicationName}"

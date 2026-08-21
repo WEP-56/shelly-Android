@@ -8,6 +8,7 @@ import '../../core/storage/app_services.dart';
 import '../../features/hosts/application/host_controller.dart';
 import '../../features/hosts/data/host_repository.dart';
 import '../../ui/shelly_icon_button.dart';
+import '../security/application/app_lock_controller.dart';
 import '../servers/server_list_view.dart';
 import '../settings/settings_view.dart';
 import '../terminal/terminal_screen.dart';
@@ -19,6 +20,7 @@ class HomeShell extends StatefulWidget {
     required this.services,
     required this.themePreference,
     required this.settings,
+    required this.appLock,
     required this.onThemeChanged,
     required this.onSettingsChanged,
     super.key,
@@ -27,6 +29,7 @@ class HomeShell extends StatefulWidget {
   final AppServices services;
   final ThemePreference themePreference;
   final AppSettings settings;
+  final AppLockController appLock;
   final ValueChanged<ThemePreference> onThemeChanged;
   final ValueChanged<AppSettings> onSettingsChanged;
 
@@ -60,6 +63,8 @@ class _HomeShellState extends State<HomeShell> {
             server: server,
             connectionFactory: widget.services.sshConnections,
             keepAlive: widget.settings.keepAlive,
+            autoReconnect: widget.settings.autoReconnect,
+            terminalWakeLock: widget.settings.terminalWakeLock,
             fontSize: widget.settings.fontSize,
             cursorBlink: widget.settings.cursorBlink,
             extraKeys: widget.settings.extraKeys,
@@ -67,6 +72,7 @@ class _HomeShellState extends State<HomeShell> {
             history: widget.services.history,
             agentSettings: widget.services.agentSettings,
             agentSessions: widget.services.agentSessions,
+            appLock: widget.appLock,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -186,6 +192,7 @@ class _HomeShellState extends State<HomeShell> {
                               knownHosts: widget.services.knownHosts,
                               agentSettings: widget.services.agentSettings,
                               agentSessions: widget.services.agentSessions,
+                              appLock: widget.appLock,
                               hostNames: {
                                 for (final host in _hosts.hosts)
                                   host.id: host.name,
@@ -261,6 +268,7 @@ class _HomeShellState extends State<HomeShell> {
         onConnect: _openTerminal,
         onSave: _saveServer,
         onDelete: _deleteServer,
+        appLock: widget.appLock,
       ),
     };
   }

@@ -7,9 +7,11 @@ import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
 import '../../app/models.dart';
+import '../../core/security/app_lock_settings.dart';
 import '../../core/ssh/ssh_connection_factory.dart';
 import '../../core/ssh/ssh_models.dart';
 import '../../core/ssh/ssh_session_controller.dart';
+import '../../core/system/wakelock_coordinator.dart';
 import '../../core/terminal/terminal_input.dart';
 import '../../core/terminal/terminal_session_adapter.dart';
 import '../agent/application/agent_controller.dart';
@@ -17,12 +19,15 @@ import '../agent/data/agent_session_repository.dart';
 import '../agent/data/agent_settings_repository.dart';
 import '../agent/presentation/agent_panel.dart';
 import '../history/history_repository.dart';
+import '../security/application/app_lock_controller.dart';
+import '../security/presentation/app_lock_gate.dart';
 import '../server_status/server_status_dialog.dart';
 import '../snippets/snippet_repository.dart';
 import '../sftp/sftp_transfer_controller.dart';
 import '../sftp/sftp_drawer.dart';
 import '../../ui/shelly_icon_button.dart';
 import 'extra_keys_bar.dart';
+import 'connection_diagnostics_sheet.dart';
 import 'terminal_drawers.dart';
 
 class TerminalScreen extends StatefulWidget {
@@ -30,6 +35,8 @@ class TerminalScreen extends StatefulWidget {
     required this.server,
     required this.connectionFactory,
     required this.keepAlive,
+    required this.autoReconnect,
+    required this.terminalWakeLock,
     required this.fontSize,
     required this.cursorBlink,
     required this.extraKeys,
@@ -37,12 +44,19 @@ class TerminalScreen extends StatefulWidget {
     required this.history,
     required this.agentSettings,
     required this.agentSessions,
+    required this.appLock,
     super.key,
   });
 
   final HostProfile server;
   final SshConnectionFactory connectionFactory;
   final bool keepAlive;
+  final bool autoReconnect;
+
+  /// Keeps the screen awake while this page is in the foreground. With the
+  /// screen off Dart timers stall, so the heartbeat stops and the server drops
+  /// the session.
+  final bool terminalWakeLock;
   final double fontSize;
   final bool cursorBlink;
   final List<TerminalExtraKey> extraKeys;
@@ -51,12 +65,15 @@ class TerminalScreen extends StatefulWidget {
   final AgentSettingsRepository agentSettings;
   final AgentSessionRepository agentSessions;
 
+  /// Guards opening the Agent panel, which can ask to run remote commands.
+  final AppLockController appLock;
+
   @override
   State<TerminalScreen> createState() => _TerminalScreenState();
 }
 
 class _TerminalScreenState extends State<TerminalScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final _terminalFocus = FocusNode();
   late final TerminalController _terminalController;
   late final SshSessionController _session;
@@ -66,18 +83,24 @@ class _TerminalScreenState extends State<TerminalScreen>
   bool _menuOpen = false;
   bool _agentOpen = false;
   bool _agentInputFocused = false;
+
+  /// Mirrors [_agentOpen] into the app lock; kept separate so the marking stays
+  /// balanced even when the panel is opened twice in a row.
+  bool _agentSurfaceMarked = false;
   String? _lastPendingApprovalId;
   final String _historySessionId = const Uuid().v4();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _terminalController = TerminalController(vsync: this);
     _session = SshSessionController(
       host: widget.server,
       factory: widget.connectionFactory,
       promptForHostTrust: _promptForHostKey,
       keepAlive: widget.keepAlive,
+      autoReconnect: widget.autoReconnect,
     )..addListener(_onSessionChanged);
     _terminal = TerminalSessionAdapter(
       session: _session,
@@ -94,6 +117,7 @@ class _TerminalScreenState extends State<TerminalScreen>
       history: widget.history,
     )..addListener(_onAgentChanged);
     unawaited(_agent.load());
+    _syncWakeLock();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_session.connect());
@@ -101,7 +125,18 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   @override
+  void didUpdateWidget(TerminalScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.terminalWakeLock != widget.terminalWakeLock) {
+      _syncWakeLock();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    WakelockCoordinator.instance.release(this);
+    _markAgentSurface(false);
     _agent
       ..removeListener(_onAgentChanged)
       ..dispose();
@@ -117,12 +152,41 @@ class _TerminalScreenState extends State<TerminalScreen>
     super.dispose();
   }
 
+  /// The terminal wakelock is only held while this page is actually in the
+  /// foreground: a backgrounded page holding it would keep the screen awake
+  /// behind another app.
+  void _syncWakeLock({AppLifecycleState? lifecycle}) {
+    final state =
+        lifecycle ??
+        WidgetsBinding.instance.lifecycleState ??
+        AppLifecycleState.resumed;
+    WakelockCoordinator.instance.setHeld(
+      this,
+      widget.terminalWakeLock && state == AppLifecycleState.resumed,
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    _syncWakeLock(lifecycle: state);
+    if (state != AppLifecycleState.resumed) return;
+    // Timers stall while the app is backgrounded or the screen is off, so the
+    // periodic heartbeat may have missed the moment the link died. Probe once
+    // immediately instead of showing a connected shell that eats every key.
+    unawaited(_session.checkHealth());
+  }
+
   void _onTerminalChanged() {
     if (mounted) setState(() {});
   }
 
   /// Keeps the panel in sync and surfaces a new approval request even when the
   /// panel is collapsed — a command must never wait behind a hidden sheet.
+  ///
+  /// This auto-open does not go through the app lock: a pending approval only
+  /// exists because the user already opened the panel and sent a message, and
+  /// holding the request behind a prompt would hide it.
   void _onAgentChanged() {
     if (!mounted) return;
     final pendingId = _agent.pendingApproval?.id;
@@ -131,6 +195,7 @@ class _TerminalScreenState extends State<TerminalScreen>
       _lastPendingApprovalId = pendingId;
       if (shouldOpen) _agentOpen = true;
     });
+    if (shouldOpen) _markAgentSurface(true);
   }
 
   void _onSessionChanged() {
@@ -279,14 +344,18 @@ class _TerminalScreenState extends State<TerminalScreen>
             tooltip: '文件',
             onPressed: !_session.isConnected
                 ? null
-                : () {
+                : () async {
                     setState(() => _menuOpen = false);
-                    showFilesDrawer(
+                    await showFilesDrawer(
                       context,
                       widget.server,
                       session: _session,
                       transfers: _transfers,
                     );
+                    // The drawer just became invisible again: if browsing or a
+                    // transfer killed the link, find out now rather than on the
+                    // user's next keystroke.
+                    if (mounted) unawaited(_session.checkHealth());
                   },
           ),
           ShellyIconButton(
@@ -427,6 +496,12 @@ class _TerminalScreenState extends State<TerminalScreen>
                     ),
                   ],
                 ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _showDiagnostics,
+                  icon: const Icon(Icons.monitor_heart_outlined, size: 18),
+                  label: const Text('连接诊断'),
+                ),
               ],
             ],
           ),
@@ -479,7 +554,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     SshConnectionState.awaitingHostTrust => '等待指纹确认',
     SshConnectionState.authenticating => '正在认证',
     SshConnectionState.connected => '已连接',
-    SshConnectionState.reconnecting => '正在重连',
+    SshConnectionState.reconnecting => '正在重连$_reconnectSuffix',
     SshConnectionState.disconnected => '已断开',
     SshConnectionState.failed => '连接失败',
   };
@@ -490,10 +565,25 @@ class _TerminalScreenState extends State<TerminalScreen>
     SshConnectionState.awaitingHostTrust => '等待你确认主机指纹',
     SshConnectionState.authenticating => '正在验证认证资料',
     SshConnectionState.connected => '已连接',
-    SshConnectionState.reconnecting => '正在重新连接',
+    SshConnectionState.reconnecting => '正在重新连接$_reconnectSuffix',
     SshConnectionState.disconnected => 'SSH 会话已断开',
     SshConnectionState.failed => '无法连接到设备',
   };
+
+  /// `（第 2/4 次）` while auto-reconnect is counting; empty for a manual retry.
+  String get _reconnectSuffix {
+    final attempt = _session.reconnectAttempt;
+    if (attempt <= 0) return '';
+    return '（第 $attempt/${_session.maxReconnectAttempts} 次）';
+  }
+
+  Future<void> _showDiagnostics() {
+    return showConnectionDiagnostics(
+      context,
+      host: widget.server,
+      session: _session,
+    );
+  }
 
   String _failureStageLabel(SshFailureStage stage) => switch (stage) {
     SshFailureStage.credential => '认证资料',
@@ -708,14 +798,25 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _toggleAgent() {
-    setState(() => _agentOpen = !_agentOpen);
     if (_agentOpen) {
-      // Provider/Web Search/work spec may have changed in the settings page while
-      // this screen stayed alive.
-      unawaited(_agent.reloadSettings());
-    } else {
-      _terminalFocus.requestFocus();
+      _closeAgent();
+      return;
     }
+    unawaited(_openAgent());
+  }
+
+  Future<void> _openAgent() async {
+    final unlocked = await ensureAppLockUnlocked(
+      context,
+      widget.appLock,
+      AppLockScope.agentPanel,
+    );
+    if (!unlocked || !mounted) return;
+    setState(() => _agentOpen = true);
+    _markAgentSurface(true);
+    // Provider/Web Search/work spec may have changed in the settings page while
+    // this screen stayed alive.
+    unawaited(_agent.reloadSettings());
   }
 
   void _closeAgent({bool restoreTerminalFocus = true}) {
@@ -723,7 +824,20 @@ class _TerminalScreenState extends State<TerminalScreen>
       _agentOpen = false;
       _agentInputFocused = false;
     });
+    _markAgentSurface(false);
     if (restoreTerminalFocus) _terminalFocus.requestFocus();
+  }
+
+  /// Tells the app lock whether the Agent panel is on screen, so returning from
+  /// a long background trip re-locks it even when 打开应用 is not protected.
+  void _markAgentSurface(bool open) {
+    if (open == _agentSurfaceMarked) return;
+    _agentSurfaceMarked = open;
+    if (open) {
+      widget.appLock.markSurfaceOpen(AppLockScope.agentPanel);
+    } else {
+      widget.appLock.markSurfaceClosed(AppLockScope.agentPanel);
+    }
   }
 
   void _insertCommand(String command) {
@@ -834,6 +948,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     _terminalFocus.requestFocus();
   }
 
+  /// Manual retry starts from a clean screen. Auto-reconnect deliberately does
+  /// not clear anything, so the scrollback survives a flaky link.
   void _retry() {
     _terminal.clear();
     unawaited(_session.retry());

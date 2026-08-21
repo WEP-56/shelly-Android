@@ -71,7 +71,9 @@ class AgentRemoteFileRuntime implements AgentRemoteFileBridge {
     final sftp = _sftp;
     _sftp = null;
     _opening = null;
-    if (sftp != null && !sftp.isClosed) await sftp.close();
+    if (sftp != null && !sftp.isClosed) {
+      await _session.closeSftpSession(sftp);
+    }
   }
 
   Future<SftpSession> _ensureSession() async {

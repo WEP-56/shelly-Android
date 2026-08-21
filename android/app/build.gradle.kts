@@ -90,6 +90,13 @@ android {
     }
 }
 
+dependencies {
+    // local_auth's Android implementation pulls androidx.biometric but not
+    // appcompat, while the biometric prompt needs an AppCompat theme (see
+    // res/values/styles.xml). Pinned so a transitive bump cannot change it.
+    implementation("androidx.appcompat:appcompat:1.7.0")
+}
+
 gradle.taskGraph.whenReady {
     if (!hasReleaseSigning && allTasks.any { it.name.contains("Release") }) {
         logger.warn(

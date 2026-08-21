@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 
 import '../../app/app_theme.dart';
 import '../../app/models.dart';
+import '../../core/security/app_lock_settings.dart';
+import '../security/application/app_lock_controller.dart';
+import '../security/presentation/app_lock_gate.dart';
 
 typedef HostSaveCallback = Future<String?> Function(HostSaveRequest request);
 
@@ -14,6 +17,7 @@ class ServerListView extends StatelessWidget {
     required this.onConnect,
     required this.onSave,
     required this.onDelete,
+    required this.appLock,
     super.key,
   });
 
@@ -21,6 +25,10 @@ class ServerListView extends StatelessWidget {
   final ValueChanged<HostProfile> onConnect;
   final HostSaveCallback onSave;
   final ValueChanged<HostProfile> onDelete;
+
+  /// Guards the editor of an already saved host, where the stored password or
+  /// private key can be replaced. Adding a new host is not guarded.
+  final AppLockController appLock;
 
   @override
   Widget build(BuildContext context) {
@@ -104,7 +112,7 @@ class ServerListView extends StatelessWidget {
       case _ServerAction.connect:
         onConnect(server);
       case _ServerAction.edit:
-        await showServerEditor(context, server: server, onSave: onSave);
+        await _editServer(context, server);
       case _ServerAction.copy:
         await Clipboard.setData(
           ClipboardData(text: '${server.host}:${server.port}'),
@@ -113,6 +121,23 @@ class ServerListView extends StatelessWidget {
       case _ServerAction.delete:
         final confirmed = await _confirmDelete(context, server);
         if (confirmed && context.mounted) onDelete(server);
+    }
+  }
+
+  /// Opening a saved host's editor is a credential surface: it can overwrite the
+  /// stored password or private key, so it goes through the app lock.
+  Future<void> _editServer(BuildContext context, HostProfile server) async {
+    final unlocked = await ensureAppLockUnlocked(
+      context,
+      appLock,
+      AppLockScope.hostCredentials,
+    );
+    if (!unlocked || !context.mounted) return;
+    appLock.markSurfaceOpen(AppLockScope.hostCredentials);
+    try {
+      await showServerEditor(context, server: server, onSave: onSave);
+    } finally {
+      appLock.markSurfaceClosed(AppLockScope.hostCredentials);
     }
   }
 

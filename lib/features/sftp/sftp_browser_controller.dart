@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../../core/ssh/ssh_session_controller.dart';
@@ -57,7 +55,8 @@ class SftpBrowserController extends ChangeNotifier {
     _errorMessage = null;
     _notify();
     try {
-      final sftp = _sftp ??= await _sshSession.openSftpSession();
+      final sftp = await _ensureSftp();
+      if (revision != _loadRevision || _disposed) return;
       final target =
           requestedPath ?? (_path == '.' ? initialPath ?? '.' : _path);
       final resolved = await sftp.resolvePath(target);
@@ -148,6 +147,19 @@ class SftpBrowserController extends ChangeNotifier {
     }
   }
 
+  /// Borrows the session-wide browsing channel.
+  ///
+  /// The channel belongs to [SshSessionController], not to this controller: the
+  /// drawer is rebuilt on every open, and opening a fresh SFTP channel each time
+  /// exhausts the server's `MaxSessions` limit.
+  Future<SftpSession> _ensureSftp() async {
+    final existing = _sftp;
+    if (existing != null && !existing.isClosed) return existing;
+    final session = await _sshSession.openBrowseSftpSession();
+    if (!_disposed) _sftp = session;
+    return session;
+  }
+
   SftpSession _requireSftp() {
     final sftp = _sftp;
     if (sftp == null || sftp.isClosed) {
@@ -186,7 +198,8 @@ class SftpBrowserController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     ++_loadRevision;
-    unawaited(_sftp?.close());
+    // The channel is owned by the SSH session and stays open for the next drawer
+    // open; only the reference is dropped here.
     _sftp = null;
     super.dispose();
   }

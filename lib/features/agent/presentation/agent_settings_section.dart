@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/security/app_lock_settings.dart';
 import '../../../ui/settings_tiles.dart';
+import '../../security/application/app_lock_controller.dart';
+import '../../security/presentation/app_lock_gate.dart';
 import '../data/agent_session_repository.dart';
 import '../data/agent_settings_repository.dart';
 import '../domain/agent_provider_config.dart';
@@ -21,6 +24,7 @@ class AgentSettingsSection extends StatefulWidget {
     required this.settings,
     required this.sessions,
     required this.hostNames,
+    required this.appLock,
     super.key,
   });
 
@@ -29,6 +33,9 @@ class AgentSettingsSection extends StatefulWidget {
 
   /// Host id → display name, used to group the session list.
   final Map<String, String> hostNames;
+
+  /// Guards the provider sheet, where a stored API key can be replaced.
+  final AppLockController appLock;
 
   @override
   State<AgentSettingsSection> createState() => _AgentSettingsSectionState();
@@ -86,7 +93,18 @@ class _AgentSettingsSectionState extends State<AgentSettingsSection> {
   }
 
   Future<void> _openProviders() async {
-    await showAgentProviderSheet(context, widget.settings);
+    final unlocked = await ensureAppLockUnlocked(
+      context,
+      widget.appLock,
+      AppLockScope.providerKey,
+    );
+    if (!unlocked || !mounted) return;
+    widget.appLock.markSurfaceOpen(AppLockScope.providerKey);
+    try {
+      await showAgentProviderSheet(context, widget.settings);
+    } finally {
+      widget.appLock.markSurfaceClosed(AppLockScope.providerKey);
+    }
     await _load();
   }
 

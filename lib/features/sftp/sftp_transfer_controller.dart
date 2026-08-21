@@ -260,7 +260,10 @@ class SftpTransferController extends ChangeNotifier {
     } finally {
       _controls.remove(initialTask.id);
       _stopwatches.remove(initialTask.id);
-      await session?.close();
+      // Bounded, and any failure is recorded by the session instead of being
+      // dropped: an unobserved close error here would surface as an unhandled
+      // async error and the channel would stay accounted for.
+      if (session != null) await _sshSession.closeSftpSession(session);
       _running--;
       _drainQueue();
     }

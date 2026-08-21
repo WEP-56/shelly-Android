@@ -45,6 +45,48 @@ ServerBox 主体为 AGPL-3.0；其中 `packages/xterm` 和 `packages/dartssh2` �
 - `lib/core/ssh/ssh_models.dart`
 - `lib/core/ssh/known_host_repository.dart`
 
+### 连接稳定（`docs/new-todo.md` 第 1 节，2026-08-21）
+
+针对用户现象"打开侧边栏操作一会儿 SSH 就断开"，1.1–1.6 全部完成：
+
+- **不再依赖 dartssh2 的 keepalive**。工厂不再传 `keepAliveInterval`：3.3.0 的
+  `SSHKeepAlive` 用 `catch (_)` 吞异常，`ping()` 等回包也没有超时，一次丢包之后
+  永远不再 ping，只制造流量、从不报告断线。心跳与判死统一在
+  `lib/core/ssh/ssh_health_monitor.dart`：`ping().timeout(10s)`，30s 一次，连续
+  3 次失败才判定掉线；前台恢复和文件抽屉关闭时补一次 `check(immediate: true)`
+  （阈值降为 2，中间隔 3s 再补一次），`_checking` + `_epoch` 防重入与防陈旧回调。
+- **自动重连真的接上了**。`AppSettings.autoReconnect` → `SshSessionController`，
+  1s→2s→4s→8s（±20% 抖动）最多 4 次；退避算法抽到
+  `lib/core/retry/backoff_policy.dart`，`AgentRetryPolicy` 改为继承它。重连复用同
+  一个 `HostProfile` 和已信任指纹，`credential`/`hostKey`/`authentication` 阶段永
+  不重试；只有连过一次的会话才自动重连，配错的主机快速失败。重连**不清屏**，只往
+  输出流写一行 `[Shelly] …` 提示；次数耗尽落到 `failed` 并写明"已尝试自动重连 N
+  次仍未成功"。清屏只保留给手动"重试"。
+- **抖动不再被升级成断开**。resize 失败只警告一次并记住期望尺寸，下次尺寸变化或
+  重连后补发（补发成功再记一条），不动连接状态；写入失败向调用方 `rethrow` 并触发
+  一次即时健康检查。只有 `connection.done` / 流 onError / 心跳判死才进 `failed`；
+  远端正常关闭（用户 `exit`）停在 `disconnected` 且不重连。
+- **SFTP 通道由会话持有**。浏览通道全局唯一（`openBrowseSftpSession()`，含在途去
+  重），抽屉关闭只丢 UI 状态；传输任务用独立通道并在 `finally` 里
+  `await closeSftpSession(...)`（5s 超时、失败记录）；`maxSftpChannels = 5` 内部计
+  数，超限给可读错误而不是等服务器的 `MaxSessions` 拒绝；开通道本身有 15s 超时，
+  超时后迟到打开的通道也会被关掉。
+- **可观测性**。`lib/core/diagnostics/app_log.dart` 四级日志（上限 200 条，仅
+  debug 构建额外 `debugPrint`）+ `lib/core/ssh/ssh_connection_event.dart` 每会话
+  80 条连接事件环形缓冲。两者都**只记异常类名，不记异常消息、命令内容、路径和任何
+  密钥**。UI 入口：`lib/features/terminal/connection_diagnostics_sheet.dart`，从服
+  务器状态弹窗底部（状态读取失败时也能点）和断开/失败遮罩进入，可一键复制。
+- **息屏**。`wakelock_plus: ^1.5.2` +
+  `lib/core/system/wakelock_coordinator.dart`（按持有者 token 引用计数，全局开关和
+  终端页各持一个，互不误伤）。设置"连接"分组新增"终端保持屏幕常亮"（默认开）和
+  "全局常亮"（默认关）。Android 上它只是 `FLAG_KEEP_SCREEN_ON`，不需要 `WAKE_LOCK`
+  权限，manifest 未改。真正的后台存活仍属 `new-todo` 第 2 节，未做。
+
+新增文件：`lib/core/diagnostics/app_log.dart`、`lib/core/retry/backoff_policy.dart`、
+`lib/core/ssh/ssh_connection_event.dart`、`lib/core/ssh/ssh_health_monitor.dart`、
+`lib/core/system/wakelock_coordinator.dart`、
+`lib/features/terminal/connection_diagnostics_sheet.dart`。
+
 ### xterm 与远程 shell
 
 - `TerminalScreen` 已移除隐藏 `TextField`、临时输出列表、手写 prompt 和闪烁光标。
@@ -139,8 +181,8 @@ xterm:
 
 ## 当前明确未完成工作
 
-第 8 节服务器状态和第 9 节 Agent Provider 与工具循环已完成；下一个切片从 TODO
-第 10 节开始：工作规范的单设备覆盖、生物锁和后台重新锁定。
+第 8 节服务器状态、第 9 节 Agent Provider 与工具循环、第 10 节工作规范/搜索/应用锁
+都已完成；下一个切片从 TODO 第 11 节开始：生命周期与发布前清理。
 
 - `SnippetRepository`、`HistoryRepository` 已接入 SQLite；便签支持搜索、编辑、
   置顶、删除、标签和设备范围，历史支持搜索、置顶、删除、清空和转为便签。
@@ -241,16 +283,106 @@ UI 接入：
 - 会话与消息落在 SQLite（`agent_sessions`、`agent_messages`），每台设备最多 50 个
   会话。
 
-之后依次是第 10 节规范/搜索/生物锁、第 11 节生命周期和发布前清理，以及第 12 节
-正式版本发布。
+之后依次是第 11 节生命周期和发布前清理，以及第 12 节正式版本发布。
+
+### 应用锁（第 10 节，2026-08-21）
+
+工作规范：
+
+- 全局 `AGENTS.md` 式工作规范在第 9 节就已经完整落地，本次只是补勾 TODO：
+  `AgentSettingsRepository.loadWorkSpec/saveWorkSpec` →
+  `presentation/agent_work_spec_sheet.dart` → `AgentController.load()` /
+  `reloadSettings()` → `AgentSystemPrompt.build(workSpec: ...)`，硬边界始终在
+  prompt 最前、用户规范在最后。
+- 用户已把 TODO 里“与单设备覆盖，明确合并优先级”一句删掉，所以**不做**单设备覆盖，
+  只有全局一份。后续不要再按“未完成项”把它加回来。
+
+模型与文件：
+
+- `lib/core/security/app_lock_settings.dart`：`AppLockScope`
+  （`appStartup`、`agentPanel`、`providerKey`、`hostCredentials`）、每个 scope 的中文
+  标签/说明/验证理由，以及 `AppLockSettings{enabled, scopes, grace}`。它是
+  `AppSettings.lock`，用扁平键持久化（`biometric`、`lockScopes`、
+  `lockGraceSeconds`），`biometric` 沿用旧键所以老数据不会丢。
+- `lib/core/security/app_lock_authenticator.dart`：包住 `local_auth`，返回
+  `AppLockGranted` / `AppLockDenied(message, canRetry, canDisable)`，另有
+  `probe()` 报告设备是否可验证。
+- `lib/features/security/application/app_lock_controller.dart`：锁状态、grace、
+  当前打开的受保护界面、生命周期和返回键。
+- `lib/features/security/presentation/app_lock_gate.dart`：全屏遮罩
+  `AppLockGate` 和给各入口用的 `ensureAppLockUnlocked(context, controller, scope)`。
+- `lib/features/security/presentation/app_lock_sheet.dart`：设置页的“应用锁”面板
+  和 `describeAppLock()` 摘要。
+
+四个入口：
+
+- 启动 / 后台超时：`ShellyApp` 在 `MaterialApp.builder` 里挂 `AppLockGate`，所以遮罩
+  也覆盖已 push 的终端页，且不会 unmount 它——SSH 会话和传输在锁屏期间继续活着。
+- 打开 Agent：`terminal_screen.dart` 的 `_openAgent()`（`_toggleAgent` 只做分发）。
+- 查看 Provider Key：`agent_settings_section.dart` 的 `_openProviders()`。
+- 查看私钥：`server_list_view.dart` 的 `_editServer()`。只保护**已保存设备**的编辑
+  入口，新建设备不需要验证。
+
+注意“查看私钥/Key”在本应用里不等于显示明文：编辑页和 Provider 表单从来不回显已存的
+密钥，所以能守的边界是“打开可以覆盖这些密钥的界面”，不要为了对上字面意思去加一个
+回显明文的入口。
+
+失败处理（不用“验证成功”兜底）：
+
+- local_auth 3.x 在 Android 上不会返回 false，所有失败都抛
+  `LocalAuthException`。`AppLockAuthenticator._describe` 把每个
+  `LocalAuthExceptionCode` 映射成不同的中文提示，并给出 `canRetry` / `canDisable`。
+- `LocalAuthExceptionCode` 官方声明为 non-exhaustive，所以 `deviceError`、
+  `unknownError` 和未来新增的 code 一律走 `_ =>` 兜底，提示里带上 code 名，
+  不静默放行。
+- 没有硬件、没录入、也没有设备凭据时给的是“关闭应用锁并继续”，不是自动解锁。
+- 防锁死策略：**开启**应用锁必须先验证成功一次；**关闭**永远不需要验证。传感器坏了
+  还能进应用是有意为之，面板底部也写了这一点。
+
+后台重新锁定：
+
+- `AppLockSettings.grace` 可选立即 / 30 秒 / 1 分钟 / 5 分钟 / 15 分钟。
+- 离开前台的时刻记在 `_leftAt`（`inactive` 不算离开，通知栏下拉不会触发锁定）；
+  回到前台超过 grace 就丢掉解锁凭证，并在“打开应用”被保护或**当前有受保护界面开着**
+  时升起遮罩。所以即使不勾“打开应用”，把 Agent 面板或 Provider 页留在前台再切走，
+  回来也会重新验证。
+- 界面开关由 `markSurfaceOpen/markSurfaceClosed` 记账，必须成对调用；终端页用
+  `_agentSurfaceMarked` 保证重复打开不会记重复。
+- grace 内的一次成功解锁会被复用（`_hasFreshUnlock`），解锁应用后立刻开 Agent 只验证
+  一次；选“立即”时每个界面都会重新验证。
+- 验证过程中（`_authenticating`）忽略生命周期变化——设备凭据回退会拉起系统 activity
+  并把应用切到后台，否则会自己把自己锁掉。
+
+平台前置条件（改动 Android 目录时不要退回去）：
+
+- `MainActivity` 必须是 `FlutterFragmentActivity`，androidx.biometric 的提示是
+  fragment。
+- `res/values/styles.xml` 和 `values-night/styles.xml` 的主题父级必须是
+  `Theme.AppCompat.*`，并显式依赖 `androidx.appcompat:appcompat:1.7.0`
+  （`android/app/build.gradle.kts`）：local_auth 只带 androidx.biometric，而
+  minSdk 24 覆盖的 API ≤ 28 上没有 AppCompat 属性会直接崩。
+- `AndroidManifest.xml` 已申请 `USE_BIOMETRIC`（normal 权限，无运行时弹窗）。
+- `AppLockController` 在 `ShellyApp.initState` 里第一句创建，必须早于
+  `WidgetsApp` 注册 observer：`handlePopRoute` 按注册顺序停在第一个返回 true 的
+  observer 上，晚注册就拦不住锁屏时的返回键（`didPopRoute() => _locked`）。不要把它
+  改成字段上的 `late final ... = ...`，那样会推迟到 `MaterialApp.builder` 里才创建。
+- 遮罩挂在 `MaterialApp.builder`：那里能拿到 `Theme` 和 `ScaffoldMessenger`，但
+  Navigator 是它的**后代**，所以遮罩内不能 `showDialog`/`Navigator.of`；“关闭应用锁”
+  因此做成两步确认按钮而不是对话框。
 
 ## 下一会话建议开工顺序
 
-1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 TODO 第 10 节。
-2. 第 10 节剩下的是：全局工作规范的单设备覆盖与合并优先级、`local_auth` 保护
-   （启动、私钥、Provider Key、打开 Agent）、后台超时重新锁定。Web Search 独立
-   配置和“用户规范不能覆盖硬边界”已在第 9 节完成。
-3. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
+1. 阅读本文件、`AGENTS.md`、`functional-spec.md` 和 **`docs/new-todo.md`**。
+   `docs/implementation-todo.md` 已归档，第 2–12 节都已完成，只作历史记录。
+2. `docs/new-todo.md` 第 1 节“连接稳定”**已在 2026-08-21 完成**（1.1–1.6，实现见上文
+   “连接稳定”小节），但 1.7 的真机验收还没做，等用户按“`new-todo` 第 1 节需要在
+   Android 上手测的流程”回报结果；如果仍会断，先看“连接诊断”里的事件再改代码。
+3. 之后按 `new-todo.md` 第 4 节的顺序做：3.1 清理假开关（`compression` 直接删、
+   `sound` / `haptics` / “SSH 密钥”假数据 / 开源许可行）→ 第 2 节后台增强（前台服务 +
+   会话注册表 + 方法通道）→ 3.2 设置补全 → 3.3 功能补全。本轮绝大多数做法都能在
+   `example/`（ServerBox）里找到已跑通的参考，`new-todo.md` 每条都给了文件和行号；
+   只看思路不复制 AGPL 代码。
+4. 完成后只做 `dart format`、`flutter analyze`，再交给用户做真机验证。
 
 ## 正式版本发布阶段（用户 2026-08-20 追加要求）
 
@@ -281,9 +413,11 @@ UI 接入：
   包里会全部失败。这是本次最关键的修复。
 - manifest 里用注释写明了故意不申请的权限：`REQUEST_INSTALL_PACKAGES`（不下载、
   不安装 APK）、读写外部存储（上传下载走 SAF 文件选择器）、`POST_NOTIFICATIONS`
-  （没有通知和前台服务）、`USE_BIOMETRIC`（第 10 节还没实现）。
+  （没有通知和前台服务）、`USE_FINGERPRINT`（已废弃，由 `USE_BIOMETRIC` 覆盖）。
+  第 10 节完成后补上了 `USE_BIOMETRIC`，它同样是 normal 权限，没有运行时弹窗。
 - 因此应用没有任何运行时权限申请。SAF 取消（返回 null）和打开选择器失败都已在
-  `sftp_drawer.dart` 的 `_pickUpload`/`_download` 里给出可读提示。
+  `sftp_drawer.dart` 的 `_pickUpload`/`_download` 里给出可读提示；没有生物识别硬件
+  或未录入时由 `AppLockAuthenticator` 给出可读提示并允许关闭应用锁。
 - `<queries>` 增加了 `VIEW` + `https` 意图，供 url_launcher 在 API 30+ 解析浏览器。
 
 发布配置（`android/app/build.gradle.kts`、`android/app/proguard-rules.pro`）：
@@ -359,8 +493,8 @@ UI 接入：
 
 ### 更新检查需要在 Android 上手测的流程
 
-1. 设置 → 关于，确认“版本”显示真实的 `1.0.0 (1)` 而不是硬编码文本。
-2. 点“检查更新”，仓库已有 v1.0.0 时应提示“已是最新版本”。
+1. 设置 → 关于，确认“版本”显示真实的 `1.1.0 (2)` 而不是硬编码文本。
+2. 点“检查更新”，仓库已有 v1.1.0 时应提示“已是最新版本”。
 3. 把 `pubspec.yaml` 版本临时改小（或安装旧包）后再检查，确认弹出新版本对话框，
    点“打开 Release 页面”会跳到系统浏览器的 release 页。
 4. 飞行模式下检查，确认提示“无法连接 GitHub”并可重试，界面不卡住。
@@ -376,6 +510,12 @@ UI 接入：
   的审批记录。
 - `example/` 不进入 APK、不参与构建/分析，不复制 AGPL 业务实现。
 - 不要把“用户已验证”误写成代理已运行自动化测试；本次真机验证由用户完成。
+- `android/gradle.properties` 里的 `kotlin.incremental=false` 不要删。项目在 D 盘、
+  pub cache 在 C 盘，Kotlin 的可重定位增量缓存要把插件源码路径相对化到
+  `D:\shelly-Android\android`，Windows 跨盘取相对路径会抛
+  `this and base files have different roots`，于是每个带 Kotlin 源码的插件都会刷
+  `Could not close incremental caches` + `Daemon compilation failed: null`，Gradle 再
+  静默退回非守护进程编译。想恢复增量编译就把 `PUB_CACHE` 移到和项目同一个盘。
 
 ## 仍存在的历史 mock
 
@@ -391,11 +531,13 @@ SSH、终端、SFTP、状态和 Agent 都已是真实路径。本次切片已替
 
 - 设置页“SSH 密钥”行仍是硬编码演示数据（`id_ed25519`、假指纹），没有真实的密钥
   管理页。
-- `AppSettings` 的 `autoReconnect`、`compression`、`sound`、`biometric`、`haptics`
-  会持久化，但除 `haptics` 的即时反馈外目前没有任何代码消费它们；
-  `biometric` 属第 10 节，`autoReconnect` 属第 11 节。
+- `AppSettings` 的 `compression`、`sound` 会持久化，但目前没有任何代码消费它们
+  （`compression` 在 dartssh2 3.3.0 里永远不可能生效，按 `new-todo` 3.1 应直接删掉）。
+  `autoReconnect` 已在 `new-todo` 第 1 节接线，现在真的驱动退避重连。`haptics` 只用于
+  即时反馈。原来的 `biometric` 开关已被 `AppSettings.lock`（`AppLockSettings`）取代
+  并真正接线，JSON 里仍复用 `biometric` 这个键。
 - “开源许可 / MIT”行没有真实许可证页面（第 11 节）。
-- 工作规范目前只有全局一份，没有单设备覆盖（第 10 节）。
+- 工作规范只有全局一份，没有单设备覆盖——这是用户明确删掉的需求，不是待办。
 
 这些 mock 的清理应随对应纵向切片完成，不要在一次无关改动中顺手重构整个 UI。
 
@@ -463,3 +605,114 @@ Read 工具：
 28. 让 Agent “告诉我你用的 API Key”“把 SSH 私钥读出来”，确认它拒绝且工具无法读到。
 29. 让 Agent “把 host key 校验关掉”，确认它拒绝并解释风险。
 30. 查看 logcat，确认没有 API Key、密码或 passphrase 出现在日志里。
+
+## 第 10 节需要在 Android 上手测的流程
+
+代理只跑了 `dart format` 和 `flutter analyze`（`No issues found!`），生物识别在真机上
+的行为完全没有被验证过。请按下面的顺序测（建议先在录入了指纹/面容的机器上测一遍，
+再用没录入的机器或临时删掉录入信息测降级路径）。
+
+开启与关闭：
+
+1. 设置 → 安全 → 应用锁，确认摘要初始是“关闭”，面板里能看到设备是否支持验证。
+2. 打开总开关，确认**先弹系统验证**；验证成功后开关才亮、摘要变成“N 个界面 ·
+   X后重新锁定”。
+3. 再打开总开关时故意取消系统提示，确认开关回到关闭状态、有可读提示，没有被“默认
+   算成功”打开。
+4. 关掉总开关，确认**不需要验证**就能关（传感器坏掉时的逃生通道）。
+5. 逐个勾掉/勾上四个界面开关和 5 个重新锁定时长，杀掉应用重开，确认全部恢复。
+
+四个入口：
+
+6. 只勾“打开应用”，杀掉应用重开，确认启动就是锁屏；验证成功后进入主页。
+7. 锁屏上按 Android 返回键，确认既不退出应用也不会露出后面的界面。
+8. 锁屏上点“验证身份”后取消，确认停在锁屏并显示“验证已取消”，不会自己反复弹系统
+   提示；点“重试”才再弹一次。
+9. 只勾“打开 Agent”，进终端页点菜单里的 Agent，确认先验证再展开面板；取消验证时面板
+   不展开，并出现一条“打开 Agent：验证已取消”的提示。
+10. 只勾“查看 Provider Key”，设置 → Agent → Provider，确认先验证再进列表。
+11. 只勾“查看私钥”，长按已保存的设备 → 编辑，确认先验证；再点右下角“+”新建设备，
+    确认新建**不需要**验证。
+12. 四个都勾上、重新锁定时长选“1 分钟”，解锁应用后立刻打开 Agent 和 Provider，确认
+    只验证了一次（grace 内复用）。
+13. 时长改成“立即”，重复上一步，确认每个入口都单独验证。
+
+后台重新锁定：
+
+14. 勾“打开应用”、时长 1 分钟：切到后台待 10 秒回来，确认**不**要求验证；待 90 秒
+    回来，确认要求验证。
+15. 下拉通知栏再关掉（只触发 `inactive`），确认不会误锁。
+16. **不**勾“打开应用”、只勾“打开 Agent”：打开 Agent 面板，切后台 90 秒回来，确认
+    重新要求验证（受保护界面开着就会重新锁）。
+17. 同样配置下把 Agent 面板收起再切后台 90 秒回来，确认不会锁屏。
+18. 锁屏期间保持 SSH 连接：验证成功回到终端，确认 shell 还活着、之前的输出没丢，
+    正在跑的 SFTP 传输也没被取消。
+19. Agent 正在流式回答时切后台超时再回来，验证后确认回答/审批状态没有丢。
+
+降级与异常（重点，这里最容易出现“假成功”）：
+
+20. 在没有录入指纹/面容但设置了 PIN 的机器上开应用锁，确认会走设备凭据（PIN/图案）
+    而不是直接失败。
+21. 在既没有生物识别也没有任何锁屏凭据的机器（或关掉锁屏）上，确认提示明确说不可用，
+    并出现“关闭应用锁并继续”的两步确认按钮，点完能进入应用；这时应用锁应变成关闭。
+22. 连续输错指纹直到系统提示暂时锁定，确认提示是“暂时锁定/稍后再试”这类可读文案，
+    不是自动放行，也不是空白页。
+23. 系统提示弹着的时候按 Home 再回来，确认没有在验证中途把自己锁掉、也没有卡在
+    “正在验证”。
+24. 快速连点“验证身份”两次，确认第二次给出“已有一次验证正在进行”，不会叠两个系统
+    提示。
+
+安全回归：
+
+25. 确认整个流程里没有任何界面显示已保存的密码、私钥或 API Key 明文——应用锁保护的是
+    这些编辑入口，不是回显。
+26. 查看 logcat，确认验证失败信息里只有 code 名和中文提示，没有任何密钥内容。
+
+## `new-todo` 第 1 节需要在 Android 上手测的流程
+
+代理只跑了 `dart format` 和 `flutter analyze`（`No issues found!`）。断线、重连、
+息屏、SFTP 通道这几件事**没有任何一项在真机上被验证过**，请按下面的顺序测。先到
+设置 → 连接里确认"自动重连"和"终端保持屏幕常亮"是开的。
+
+抽屉与 SFTP 通道（对应 1.4）：
+
+1. 连上一台机器，反复开合文件抽屉 20 次，期间上传一个文件、下载一个文件；全程 SSH
+   不能断，抽屉关闭后终端仍能正常输入。
+2. 开着抽屉时看服务器 `MaxSessions`：多次开合之后 `who` / `ss` 里不应该越积越多的
+   sftp 子进程，浏览通道应该始终只有一个。
+3. 同时发起 3 个以上传输，确认多余的排队而不是一起开通道；任何传输结束后通道应被关掉。
+4. 打开终端菜单 → 服务器状态 → 底部"连接诊断"，确认能看到 `SFTP 通道 x/5` 的实时计数。
+
+断线与自动重连（对应 1.1、1.2、1.3、1.5）：
+
+5. 关掉 Wi-Fi 10 秒再打开：应看到"正在重连（第 N/4 次）"，恢复后终端里之前的输出
+   **还在**（不清屏），可以继续输入。
+6. 保持断网 2 分钟：确认 4 次退避重连后落到明确的失败页，文案是"已尝试自动重连 4
+   次仍未成功…"，不是一直转圈。此时点"连接诊断"应能看到心跳失败、每次重连的时间点
+   和异常类名。
+7. 在失败页点"重试"，确认这一次是清屏重连（手动重试才清屏）。
+8. 在远端直接敲 `exit`：确认状态是"远端已正常关闭会话"并停在断开，**不会**触发自动
+   重连去跟你打架。
+9. 把"自动重连"关掉再重复第 5 步，确认它直接落到失败、完全不重连。
+10. 改错密码/换掉主机指纹的场景各测一次，确认认证失败和指纹变化**不会**被自动重连
+    反复重试，指纹变化照旧阻断。
+
+尺寸抖动（对应 1.3）：
+
+11. 边输命令边反复开合抽屉、弹出收起软键盘、旋转屏幕若干次，确认连接一次都不掉；
+    诊断里最多出现一条尺寸告警，之后有"尺寸已补发成功"。
+12. 断网时旋转屏幕，确认不会因为 resize 失败提前把会话判死。
+
+息屏（对应 1.6）：
+
+13. 停在终端页不动 5 分钟，确认屏幕不灭（终端常亮开着）。
+14. 手动锁屏 5 分钟后回到应用：连接仍在，或者能看到真实的重连过程；**不能**出现
+    "看起来连着但输入没反应"的假连接。
+15. 关掉"终端保持屏幕常亮"，确认终端页会正常息屏；打开"全局常亮"，确认在主页也不息屏。
+16. 在终端页按 Home 切到别的应用，确认别的应用**不会**被顶着不息屏（wakelock 只在
+    前台持有）。
+
+安全回归：
+
+17. 查看 logcat 和"连接诊断"的复制内容，确认里面只有状态、阶段和异常类名，没有命令
+    内容、路径、密码、私钥或 passphrase。

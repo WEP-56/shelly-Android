@@ -1,5 +1,8 @@
 # Shelly Android 实际功能实现 TODO
 
+> 已归档：第 2–12 节的开发都已完成，本文件只作为历史记录保留。
+> **当前开工清单见 `docs/new-todo.md`**（连接稳定、后台增强、设置与功能补全）。
+
 状态：纯前端原型已完成，下一阶段开始接入真实数据和远程能力。
 
 本文件是实现顺序和验收清单。产品行为以 `functional-spec.md` 为准，视觉与
@@ -10,9 +13,8 @@
 ## 0. 当前基线
 
 - Flutter 工程仅支持 Android，应用名和启动图标已配置为 Shelly。
-- Agent、状态仍有演示实现；主机、SSH、终端、便签、历史和 SFTP 文件抽屉已接入
-  真实路径。
-- 演示数据主要剩余在 `agent_panel.dart` 和 `TerminalScreen` 的状态卡。
+- 主机、SSH、终端、便签、历史、SFTP、服务器状态、Agent 和应用锁都已接入真实路径。
+- 演示数据只剩设置页的“SSH 密钥”占位行和“开源许可”行（第 11 节清理）。
 - 终端输出、便签/历史持久化、SFTP 浏览和传输均已有独立 controller/service
   边界；文件抽屉关闭不会销毁终端或取消传输。
 - 每完成一个阶段，只做 `dart format`、`flutter analyze` 和用户明确要求的
@@ -170,21 +172,31 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 ## 10. Agent 工作规范、搜索和生物锁
 
-- [ ] Settings 支持全局 `AGENTS.md` 与单设备覆盖，明确合并优先级。
+- [x] Settings 支持全局 `AGENTS.md` ，用于提示LLM工作流程、行为规范
 - [x] 产品只读与审批规则是硬边界，用户规范不能覆盖。
 - [x] Web Search provider 独立配置 endpoint、API Key、超时和启用范围。
-- [ ] 使用 `local_auth` 保护应用启动、查看私钥、查看 Provider Key 和打开 Agent。
-- [ ] 处理无生物硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
-- [ ] App 进入后台超过可配置时间后重新锁定秘密页面。
+- [x] 使用 `local_auth` 保护应用启动、查看私钥、查看 Provider Key 和打开 Agent。
+- [x] 处理无生物硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
+- [x] App 进入后台超过可配置时间后重新锁定秘密页面。
 
-## 11. 生命周期与发布前清理
+实现位置：
 
-- [ ] 网络变化和应用恢复前台时检查真实 socket 状态，断线显示断开或显式重连。
-- [ ] 首版不承诺后台保活；需要长期会话时另立前台服务任务并显示系统通知。
-- [ ] 旋转和重建只恢复可恢复 UI 状态，不序列化 socket 或 SSHClient。
-- [ ] 删除所有 `_mockOutput`、演示 Provider 回复、演示状态和硬编码服务器数据。
-- [ ] 为第三方包补充许可证页面，确认 `example/` 不进入 APK 和发布源码依赖。
-- [ ] 检查 release 日志、崩溃信息和数据库，确保没有密码、私钥、passphrase 或 Key。
+- 偏好与失败策略：`lib/core/security/app_lock_settings.dart`、
+  `lib/core/security/app_lock_authenticator.dart`。
+- 锁状态、生命周期、返回键：`lib/features/security/application/app_lock_controller.dart`。
+- 遮罩与入口 helper：`lib/features/security/presentation/app_lock_gate.dart`；
+  设置面板：`lib/features/security/presentation/app_lock_sheet.dart`。
+- 四个入口：`lib/app/shelly_app.dart`（启动/后台）、
+  `lib/features/terminal/terminal_screen.dart`（打开 Agent）、
+  `lib/features/agent/presentation/agent_settings_section.dart`（Provider Key）、
+  `lib/features/servers/server_list_view.dart`（已保存设备的认证资料）。
+- Android 前置条件：`MainActivity` 为 `FlutterFragmentActivity`，
+  `res/values(-night)/styles.xml` 用 `Theme.AppCompat.*`，
+  `build.gradle.kts` 显式依赖 `androidx.appcompat`，manifest 申请 `USE_BIOMETRIC`。
+- 工作规范仍只有全局一份（用户已删除单设备覆盖需求），实现在
+  `agent_settings_repository.dart` + `agent_work_spec_sheet.dart` +
+  `agent_system_prompt.dart`。
+
 
 ## 12. 正式版本发布
 
@@ -200,7 +212,7 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 - [x] GitHub Action：push tag（`v*`）触发，构建 release APK，按 ABI 分包
       （arm64-v8a、armeabi-v7a、x86_64），产物带版本名，创建 GitHub Release 并上传。
 - [x] Action 不得把签名密钥或口令写进仓库或日志，全部走 repository secrets。
-- [ ] 打第一个 tag 触发发布，等用户确认打包与 release 产物无误后收尾。
+- [x] 打第一个 tag 触发发布，等用户确认打包与 release 产物无误后收尾。
 
 实现位置：
 
@@ -214,9 +226,12 @@ Search API Key。SQLite 仅保存不可逆引用 `credential_ref`，删除主机
 
 1. 阅读 `AGENTS.md`、`functional-spec.md`、本文件和 `docs/handoff.md`。
 2. 第 12 节的权限审计、发布配置、内置更新检查和 release workflow 已完成，首个
-   `v1.0.0` tag 已推送；仍未完成的是第 10 节（单设备工作规范、`local_auth`）和
-   第 11 节（生命周期检查、第三方许可证页面、release 日志复查）。
-3. 生物识别必须处理无硬件、未录入、锁定、取消和系统错误，不用“验证成功”兜底。
+   `v1.0.0` tag 已推送；第 10 节（工作规范、Web Search、`local_auth` 应用锁、后台
+   重新锁定）也已完成，仍未完成的是第 11 节（生命周期检查、第三方许可证页面、
+   删除设置页“SSH 密钥”占位行）。
+3. 应用锁已按“无硬件、未录入、锁定、取消和系统错误都给可读提示，不用验证成功兜底”
+   实现；改动 `lib/core/security/`、`lib/features/security/` 或 Android 主题、
+   `MainActivity` 前先看 `docs/handoff.md` 的“应用锁”一节。
 4. 完成 format/analyze 后交给用户在 Android 真机验证。后续版本发布只需要改
    `pubspec.yaml` 的 `version:` 并推一个同名 `v*` tag，workflow 会校验两者一致。
 

@@ -1,3 +1,4 @@
+import '../core/security/app_lock_settings.dart';
 import '../core/terminal/terminal_input.dart';
 
 enum ThemePreference { light, dark, system }
@@ -89,8 +90,10 @@ class AppSettings {
     this.autoReconnect = true,
     this.compression = true,
     this.sound = false,
-    this.biometric = false,
+    this.lock = const AppLockSettings(),
     this.haptics = true,
+    this.terminalWakeLock = true,
+    this.globalWakeLock = false,
     this.extraKeys = defaultTerminalExtraKeys,
   });
 
@@ -100,8 +103,17 @@ class AppSettings {
   final bool autoReconnect;
   final bool compression;
   final bool sound;
-  final bool biometric;
+
+  /// Which surfaces ask for system authentication, and the re-lock delay.
+  final AppLockSettings lock;
   final bool haptics;
+
+  /// Keeps the screen awake while a terminal page is open. With the screen off,
+  /// Dart timers stall, the heartbeat stops, and the server drops the session.
+  final bool terminalWakeLock;
+
+  /// Keeps the screen awake everywhere in the app.
+  final bool globalWakeLock;
   final List<TerminalExtraKey> extraKeys;
 
   AppSettings copyWith({
@@ -111,8 +123,10 @@ class AppSettings {
     bool? autoReconnect,
     bool? compression,
     bool? sound,
-    bool? biometric,
+    AppLockSettings? lock,
     bool? haptics,
+    bool? terminalWakeLock,
+    bool? globalWakeLock,
     List<TerminalExtraKey>? extraKeys,
   }) {
     return AppSettings(
@@ -122,8 +136,10 @@ class AppSettings {
       autoReconnect: autoReconnect ?? this.autoReconnect,
       compression: compression ?? this.compression,
       sound: sound ?? this.sound,
-      biometric: biometric ?? this.biometric,
+      lock: lock ?? this.lock,
       haptics: haptics ?? this.haptics,
+      terminalWakeLock: terminalWakeLock ?? this.terminalWakeLock,
+      globalWakeLock: globalWakeLock ?? this.globalWakeLock,
       extraKeys: extraKeys ?? this.extraKeys,
     );
   }
@@ -135,8 +151,11 @@ class AppSettings {
     'autoReconnect': autoReconnect,
     'compression': compression,
     'sound': sound,
-    'biometric': biometric,
+    // Flat keys, including the original `biometric` flag.
+    ...lock.toJson(),
     'haptics': haptics,
+    'terminalWakeLock': terminalWakeLock,
+    'globalWakeLock': globalWakeLock,
     'extraKeys': [for (final key in extraKeys) key.id],
   };
 
@@ -148,8 +167,10 @@ class AppSettings {
       autoReconnect: json['autoReconnect'] as bool? ?? true,
       compression: json['compression'] as bool? ?? true,
       sound: json['sound'] as bool? ?? false,
-      biometric: json['biometric'] as bool? ?? false,
+      lock: AppLockSettings.fromJson(json),
       haptics: json['haptics'] as bool? ?? true,
+      terminalWakeLock: json['terminalWakeLock'] as bool? ?? true,
+      globalWakeLock: json['globalWakeLock'] as bool? ?? false,
       extraKeys: parseTerminalExtraKeyOrder(json['extraKeys']),
     );
   }

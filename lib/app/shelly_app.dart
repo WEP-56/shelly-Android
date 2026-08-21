@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/security/app_lock_settings.dart';
 import '../core/storage/app_services.dart';
 import '../core/storage/settings_repository.dart';
+import '../core/system/wakelock_coordinator.dart';
 import '../features/home/home_shell.dart';
+import '../features/security/application/app_lock_controller.dart';
+import '../features/security/presentation/app_lock_gate.dart';
 import 'app_theme.dart';
 import 'models.dart';
 
@@ -27,6 +31,11 @@ class _ShellyAppState extends State<ShellyApp> {
   int _settingsRevision = 0;
   int _themeRevision = 0;
 
+  /// Created in [initState], before `MaterialApp` mounts, so it registers as a
+  /// lifecycle and pop-route observer ahead of `WidgetsApp` and therefore sees
+  /// the Android back button first while the app is locked.
+  late final AppLockController _lock;
+
   ThemeMode get _themeMode => switch (_themePreference) {
     ThemePreference.light => ThemeMode.light,
     ThemePreference.dark => ThemeMode.dark,
@@ -36,6 +45,7 @@ class _ShellyAppState extends State<ShellyApp> {
   @override
   void initState() {
     super.initState();
+    _lock = AppLockController(onSettingsChanged: _lockChanged);
     unawaited(_initialize());
   }
 
@@ -59,6 +69,9 @@ class _ShellyAppState extends State<ShellyApp> {
         _themePreference = theme;
         _loading = false;
       });
+      // First apply: a cold start is locked whenever the startup scope is on.
+      _lock.applySettings(settings.lock);
+      _syncGlobalWakeLock();
     } on Object catch (error) {
       if (widget.services == null && services != null) {
         await services.close();
@@ -73,8 +86,18 @@ class _ShellyAppState extends State<ShellyApp> {
 
   @override
   void dispose() {
+    WakelockCoordinator.instance.release(this);
+    _lock.dispose();
     if (widget.services == null) unawaited(_services?.close());
     super.dispose();
+  }
+
+  /// Claims the app-wide screen wakelock on behalf of the global setting.
+  ///
+  /// The terminal page holds its own token, so turning this off does not fight
+  /// the per-terminal setting.
+  void _syncGlobalWakeLock() {
+    WakelockCoordinator.instance.setHeld(this, _settings.globalWakeLock);
   }
 
   @override
@@ -86,6 +109,10 @@ class _ShellyAppState extends State<ShellyApp> {
       theme: ShellyTheme.light(),
       darkTheme: ShellyTheme.dark(),
       themeMode: _themeMode,
+      // The gate goes here rather than around `home`, so it also covers pushed
+      // routes such as the terminal without unmounting them.
+      builder: (context, child) =>
+          AppLockGate(controller: _lock, child: child ?? const SizedBox()),
       home: _loading
           ? const _StartupView()
           : _startupError != null
@@ -94,6 +121,7 @@ class _ShellyAppState extends State<ShellyApp> {
               services: _services!,
               themePreference: _themePreference,
               settings: _settings,
+              appLock: _lock,
               onThemeChanged: _themeChanged,
               onSettingsChanged: _settingsChanged,
             ),
@@ -111,7 +139,19 @@ class _ShellyAppState extends State<ShellyApp> {
     final previous = _settings;
     final revision = ++_settingsRevision;
     setState(() => _settings = value);
+    _lock.applySettings(value.lock);
+    _syncGlobalWakeLock();
     unawaited(_persistSettings(value, previous, revision));
+  }
+
+  /// The lock controller changed its own settings (the only case today is
+  /// disabling the lock after an unrecoverable authentication failure).
+  Future<void> _lockChanged(AppLockSettings lock) async {
+    final value = _settings.copyWith(lock: lock);
+    final previous = _settings;
+    final revision = ++_settingsRevision;
+    setState(() => _settings = value);
+    await _persistSettings(value, previous, revision);
   }
 
   Future<void> _persistTheme(
@@ -139,7 +179,11 @@ class _ShellyAppState extends State<ShellyApp> {
       await _services!.settings.saveSettings(value);
     } on SettingsRepositoryException catch (error) {
       if (!mounted) return;
-      if (_settingsRevision == revision) setState(() => _settings = previous);
+      if (_settingsRevision == revision) {
+        setState(() => _settings = previous);
+        _lock.applySettings(previous.lock);
+        _syncGlobalWakeLock();
+      }
       _message(error.message);
     }
   }

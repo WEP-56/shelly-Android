@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_theme.dart';
 import '../../app/models.dart';
 import '../../core/ssh/ssh_session_controller.dart';
+import '../terminal/connection_diagnostics_sheet.dart';
 import 'server_status_service.dart';
 
 Future<void> showServerStatusDialog(
@@ -14,19 +15,24 @@ Future<void> showServerStatusDialog(
 }) {
   return showDialog<void>(
     context: context,
-    builder: (context) =>
-        ServerStatusDialog(host: host, service: ServerStatusService(session)),
+    builder: (context) => ServerStatusDialog(
+      host: host,
+      session: session,
+      service: ServerStatusService(session),
+    ),
   );
 }
 
 class ServerStatusDialog extends StatefulWidget {
   const ServerStatusDialog({
     required this.host,
+    required this.session,
     required this.service,
     super.key,
   });
 
   final HostProfile host;
+  final SshSessionController session;
   final ServerStatusService service;
 
   @override
@@ -96,9 +102,36 @@ class _ServerStatusDialogState extends State<ServerStatusDialog> {
             ),
             const SizedBox(height: 18),
             Flexible(child: _buildContent()),
+            const SizedBox(height: 4),
+            _buildFooter(),
           ],
         ),
       ),
+    );
+  }
+
+  /// The diagnostics entry lives outside [_buildContent] so it stays reachable
+  /// while the status snapshot itself is loading or failing — a broken link is
+  /// exactly when the user needs the connection log.
+  Widget _buildFooter() {
+    return Row(
+      children: [
+        TextButton.icon(
+          onPressed: () => showConnectionDiagnostics(
+            context,
+            host: widget.host,
+            session: widget.session,
+          ),
+          icon: const Icon(Icons.monitor_heart_outlined, size: 18),
+          label: const Text('连接诊断'),
+        ),
+        const Spacer(),
+        IconButton(
+          onPressed: _loading ? null : _load,
+          tooltip: '刷新状态',
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
     );
   }
 
@@ -169,15 +202,6 @@ class _ServerStatusDialogState extends State<ServerStatusDialog> {
             monospace: true,
           ),
           _DetailRow(label: '运行时间', value: _duration(snapshot.uptime)),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: IconButton(
-              onPressed: _loading ? null : _load,
-              tooltip: '刷新状态',
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ),
         ],
       ),
     );
